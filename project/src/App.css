@@ -1,0 +1,92 @@
+#root {
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.nav-container {
+  @apply flex items-center justify-between py-4 px-6;
+}
+
+.logo {
+  height: 2.5em;
+  transition: transform 300ms;
+}
+
+.logo:hover {
+  transform: scale(1.05);
+}
+
+.hero-section {
+  @apply flex items-center justify-between py-16;
+}
+
+.hero-content {
+  @apply max-w-xl;
+}
+
+.hero-title {
+  @apply text-6xl font-bold leading-tight;
+}
+
+.hero-title span {
+  color: #4DC6B6;
+}
+
+.hero-title:hover {
+  color: var(--hover-color);
+}
+
+.hero-description {
+  @apply text-lg text-gray-600 mt-6 mb-8;
+}
+
+.hero-description:hover {
+  color: var(--hover-color);
+}
+
+.button-group {
+  @apply flex gap-4;
+}
+
+.demo-button {
+  @apply btn btn-outline flex items-center gap-2;
+}
+
+.download-button {
+  @apply btn btn-primary flex items-center gap-2;
+}
+
+.features-grid {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 py-16;
+}
+
+.feature-card {
+  @apply card p-6;
+}
+
+.feature-icon {
+  @apply w-12 h-12 text-[#4DC6B6] mb-4;
+}
+
+.feature-card:hover .feature-icon {
+  color: var(--hover-color);
+}
+
+.testimonials-section {
+  @apply py-16 bg-gray-50;
+}
+
+@media (max-width: 768px) {
+  .hero-section {
+    @apply flex-col text-center;
+  }
+  
+  .button-group {
+    @apply justify-center;
+  }
+  
+  .hero-title {
+    @apply text-4xl;
+  }
+}

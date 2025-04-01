@@ -1,0 +1,168 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #ffffff;
+  --secondary: #f8f9fa;
+  --accent: #4DC6B6;
+  --text: #1a1a1a;
+  --text-light: #666666;
+  --hover-color: #4DC6B6;
+}
+
+/* Text hover effects */
+p, h1, h2, h3, h4, h5, h6, span, a {
+  transition: color 0.3s ease;
+}
+
+p, h1, h2, h3, h4, h5, h6, span, a {
+  transition: color 0.3s ease;
+}
+
+/* Button hover effects */
+.btn {
+  @apply px-6 py-3 rounded-full font-semibold transition-all duration-300 text-center inline-flex items-center justify-center relative;
+}
+
+.btn-primary {
+  @apply bg-[#4DC6B6] hover:bg-[#3db5a5] text-white;
+}
+
+.btn-primary:hover {
+  color: #ffffff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(77, 198, 182, 0.3);
+}
+
+.btn-outline {
+  @apply border-2 border-[#4DC6B6] text-[#4DC6B6];
+}
+
+.btn-outline:hover {
+  @apply bg-[#4DC6B6] text-white;
+  transform: translateY(-2px);
+}
+
+/* Navigation links */
+.nav-link {
+  @apply relative transition-colors duration-300;
+}
+
+.nav-link {
+  @apply relative transition-colors duration-300;
+}
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 2px;
+  bottom: -2px;
+  left: 0;
+  background-color: var(--hover-color);
+  transition: width 0.3s ease;
+}
+
+.nav-link:hover::after {
+  width: 100%;
+}
+
+/* Card text hover effects */
+.card-title {
+  @apply text-xl font-semibold transition-colors duration-300;
+}
+
+.card-title {
+  @apply text-xl font-semibold transition-colors duration-300;
+}
+
+.card-text {
+  @apply transition-colors duration-300;
+}
+
+.card-text {
+  @apply transition-colors duration-300;
+}
+
+/* List items hover effect */
+li {
+  transition: color 0.3s ease, padding-left 0.3s ease;
+}
+
+li {
+  transition: color 0.3s ease, padding-left 0.3s ease;
+}
+
+/* Custom text hover classes */
+.hover-text {
+  @apply transition-all duration-300;
+}
+
+.hover-text {
+  @apply transition-all duration-300;
+}
+
+/* Gradient text hover effect */
+.gradient-hover {
+  background-clip: text;
+  -webkit-background-clip: text;
+  transition: all 0.3s ease;
+}
+
+.gradient-hover:hover {
+  background-image: linear-gradient(45deg, #4DC6B6, #3db5a5);
+  color: transparent;
+}
+
+/* Interactive elements hover */
+.interactive-element {
+  @apply transition-all duration-300;
+}
+
+.interactive-element {
+  @apply transition-all duration-300;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--primary);
+  color: var(--text);
+}
+
+.card {
+  @apply bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300;
+}
+
+.input {
+  @apply bg-white border border-gray-200 rounded-lg px-4 py-3 text-gray-800 focus:outline-none focus:border-[#4DC6B6] focus:ring-2 focus:ring-[#4DC6B6]/20;
+}
+
+.heading-primary {
+  @apply text-5xl font-bold mb-6;
+}
+
+/* .heading-primary:hover {
+  color: var(--hover-color);
+} */
+
+.heading-secondary {
+  @apply text-3xl font-semibold mb-4;
+}
+
+.heading-secondary:hover {
+  color: var(--hover-color);
+}
+
+.text-accent {
+  color: var(--accent);
+}
+
+.text-accent:hover {
+  color: var(--hover-color);
+}
