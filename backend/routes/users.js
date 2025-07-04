@@ -4,6 +4,8 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const { auth, isAdmin } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
+const Appointment = require('../models/Appointment');
+const Prescription = require('../models/Prescription');
 
 // Add caching
 const cache = new Map();
@@ -100,6 +102,9 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Set authorization header
+    res.setHeader('Authorization', `Bearer ${token}`);
+
     // Send response
     res.json({
       user: {
@@ -121,34 +126,17 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Get all users (admin only) or patients (for doctors)
-router.get('/', auth, async (req, res) => {
+// Get all users (admin only)
+router.get('/', auth, isAdmin, async (req, res) => {
   try {
-    console.log('User requesting data:', {
-      id: req.user._id,
-      role: req.user.role
-    });
-
-    // If user is admin, return all users
-    if (req.user.role === 'admin') {
-      const users = await User.find().select('-password');
-      res.json(users);
-      return;
+    const cachedUsers = getCachedData('all_users');
+    if (cachedUsers) {
+      return res.json(cachedUsers);
     }
 
-    // If user is doctor, return only patients
-    if (req.user.role === 'doctor') {
-      const patients = await User.find({ 
-        role: 'patient',
-        isActive: true 
-      }).select('-password');
-      res.json(patients);
-      return;
-    }
-
-    // For other roles, return only their own data
-    const user = await User.findById(req.user._id).select('-password');
-    res.json([user]);
+    const users = await User.find().select('-password');
+    setCachedData('all_users', users);
+    res.json(users);
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ error: 'Error fetching users' });
@@ -165,7 +153,7 @@ router.patch('/:id', auth, isAdmin, async (req, res) => {
     const allowedUpdates = [
       'username', 'role', 'name', 'email', 'phone',
       'department', 'degree', 'specialization', 'availability', 'experience',
-      'age', 'address', 'bloodGroup', 'medicalHistory',
+      'age', 'address', 'bloodGroup', 'medicalHistory', 'isCharusatStudent',
       'designation', 'expertise', 'education', 'yearsOfExperience',
       'position', 'shift', 'joiningDate', 'salary'
     ];
@@ -291,6 +279,291 @@ router.get('/doctors', auth, async (req, res) => {
   } catch (error) {
     console.error('Error fetching doctors:', error);
     res.status(500).json({ error: 'Error fetching doctors' });
+  }
+});
+
+// Get single user profile
+router.get('/:id', auth, async (req, res) => {
+  try {
+    // Verify the requester is authorized
+    if (!['doctor', 'admin', 'counselor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied. Only authorized personnel can view patient details.' });
+    }
+
+    const user = await User.findById(req.params.id)
+      .select('name email phone age bloodGroup allergies medicalHistory studentId role')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Log the found user data
+    console.log('Found user data:', {
+      id: user._id,
+      name: user.name,
+      role: user.role
+    });
+
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching user details:', error);
+    res.status(500).json({ error: 'Error fetching user details' });
+  }
+});
+
+// Get user analytics for the last 30 days
+router.get('/analytics', auth, async (req, res) => {
+  try {
+    console.log('\n=== Analytics Request ===');
+    console.log('User:', { id: req.user._id, role: req.user.role });
+
+    // Check permissions - only admin and doctor can access analytics
+    if (!['admin', 'doctor'].includes(req.user.role)) {
+      return res.status(403).json({ 
+        error: 'Access denied',
+        message: 'Only administrators and doctors can access analytics'
+      });
+    }
+
+    // Get and validate role filter
+    const { role } = req.query;
+    const validRoles = ['admin', 'doctor', 'patient', 'staff', 'counselor'];
+    if (role && !validRoles.includes(role)) {
+      return res.status(400).json({ 
+        error: 'Invalid role parameter',
+        message: `Role must be one of: ${validRoles.join(', ')}`
+      });
+    }
+
+    // Calculate date range
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 30);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    console.log('Date range:', { 
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    });
+
+    // Build match condition
+    const matchCondition = {
+      createdAt: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    };
+
+    // Add role filter if provided
+    if (role) {
+      matchCondition.role = role;
+    }
+
+    console.log('Match condition:', matchCondition);
+
+    try {
+      // First check if we have any users matching the criteria
+      const userCount = await User.countDocuments(matchCondition);
+      console.log('Matching users count:', userCount);
+
+      // Initialize the response array for the last 30 days
+      const filledAnalytics = [];
+      let currentDate = new Date(startDate);
+      
+      while (currentDate <= endDate) {
+        filledAnalytics.push({
+          date: currentDate.toISOString().split('T')[0],
+          count: 0
+        });
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      // If no users found, return the array of zeros
+      if (userCount === 0) {
+        console.log('No matching users found, returning zero counts');
+        return res.json(filledAnalytics);
+      }
+
+      // Aggregate users with proper date handling
+      const analytics = await User.aggregate([
+        {
+          $match: matchCondition
+        },
+        {
+          $group: {
+            _id: {
+              date: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$createdAt'
+                }
+              }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            date: '$_id.date',
+            count: 1
+          }
+        },
+        {
+          $sort: { date: 1 }
+        }
+      ]).exec();
+
+      console.log('Raw analytics:', analytics);
+
+      // Merge aggregated data with the filled array
+      analytics.forEach(item => {
+        const index = filledAnalytics.findIndex(day => day.date === item.date);
+        if (index !== -1) {
+          filledAnalytics[index].count = item.count;
+        }
+      });
+
+      console.log('Response data:', filledAnalytics);
+      res.json(filledAnalytics);
+
+    } catch (aggregateError) {
+      console.error('Aggregation error:', aggregateError);
+      throw new Error(`Aggregation failed: ${aggregateError.message}`);
+    }
+
+  } catch (error) {
+    console.error('Analytics error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch analytics',
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Get patients for doctors
+router.get('/doctor/patients', auth, async (req, res) => {
+  try {
+    const doctor = await User.findById(req.user._id);
+    if (!doctor || doctor.role !== 'doctor') {
+      return res.status(403).json({ error: 'Access denied. Doctor only.' });
+    }
+
+    // Get appointments for this doctor to find associated patients
+    const doctorAppointments = await Appointment.find({ doctor: doctor._id })
+      .distinct('patient');
+
+    // Get all patients who have had appointments with this doctor
+    const patients = await User.find({ 
+      _id: { $in: doctorAppointments },
+      role: 'patient',
+      isActive: true 
+    })
+    .select('name email phone studentId department bloodGroup age')
+    .sort({ name: 1 });
+
+    res.json(patients);
+  } catch (error) {
+    console.error('Error fetching patients:', error);
+    res.status(500).json({ error: 'Error fetching patients' });
+  }
+});
+
+// Get patients for counselors
+router.get('/counselor/patients', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'counselor') {
+      return res.status(403).json({ error: 'Access denied. Only counselors can access this route.' });
+    }
+
+    const patients = await User.find({ 
+      role: 'patient',
+      isActive: true,
+      needsCounseling: true // Add this field to filter patients who need counseling
+    }).select('name email phone age studentId counselingHistory counselingStatus');
+    
+    console.log(`Found ${patients.length} patients for counselor`);
+    res.json(patients);
+  } catch (error) {
+    console.error('Error fetching patients for counselor:', error);
+    res.status(500).json({ error: 'Error fetching patients' });
+  }
+});
+
+// Get patient details for doctor
+router.get('/doctor/patient/:patientId', auth, async (req, res) => {
+  try {
+    const doctor = await User.findById(req.user._id);
+    if (!doctor || doctor.role !== 'doctor') {
+      return res.status(403).json({ error: 'Access denied. Doctor only.' });
+    }
+
+    const patient = await User.findById(req.params.patientId)
+      .select('name email phone studentId department bloodGroup age allergies medicalHistory')
+      .lean();
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // Get patient's appointments with this doctor
+    const appointments = await Appointment.find({
+      patient: patient._id,
+      doctor: doctor._id
+    })
+      .sort({ date: -1, time: -1 })
+      .limit(5);
+
+    // Get patient's prescriptions from this doctor
+    const prescriptions = await Prescription.find({
+      patient: patient._id,
+      doctor: doctor._id
+    })
+      .populate('patient', 'name email phone')
+      .populate('doctor', 'name department')
+      .sort({ date: -1 })
+      .limit(5);
+
+    res.json({
+      ...patient,
+      recentAppointments: appointments,
+      recentPrescriptions: prescriptions
+    });
+  } catch (error) {
+    console.error('Error fetching patient details:', error);
+    res.status(500).json({ error: 'Error fetching patient details' });
+  }
+});
+
+// Get single patient details for counselors
+router.get('/counselor/patient/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'counselor') {
+      return res.status(403).json({ error: 'Access denied. Only counselors can access patient details.' });
+    }
+
+    const patient = await User.findOne({
+      _id: req.params.id,
+      role: 'patient',
+      isActive: true
+    }).select('name email phone age studentId counselingHistory counselingStatus');
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    console.log('Found patient data for counselor:', {
+      id: patient._id,
+      name: patient.name
+    });
+
+    res.json(patient);
+  } catch (error) {
+    console.error('Error fetching patient details for counselor:', error);
+    res.status(500).json({ error: 'Error fetching patient details' });
   }
 });
 

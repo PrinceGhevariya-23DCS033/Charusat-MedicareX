@@ -24,11 +24,16 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage: storage,
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
+    // Allow PDF and image files
+    if (file.mimetype === 'application/pdf' || 
+        file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF files are allowed'));
+      cb(new Error('Only PDF and image files are allowed'));
     }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
   }
 });
 
@@ -88,6 +93,12 @@ router.patch('/:id/status', auth, async (req, res) => {
 // Update lab test results
 router.patch('/:id/results', auth, upload.single('reportFile'), async (req, res) => {
   try {
+    console.log('Updating lab test results:', {
+      testId: req.params.id,
+      hasFile: !!req.file,
+      hasResults: !!req.body.results
+    });
+
     const labTest = await LabTest.findById(req.params.id);
     if (!labTest) {
       return res.status(404).json({ message: 'Lab test not found' });
@@ -106,12 +117,26 @@ router.patch('/:id/results', auth, upload.single('reportFile'), async (req, res)
       labTest.reportFile = `/uploads/lab-reports/${req.file.filename}`;
     }
 
-    labTest.results = req.body.results;
+    // Update results and status
+    if (req.body.results) {
+      labTest.results = req.body.results;
+    }
     labTest.status = 'completed';
+    
     const updatedLabTest = await labTest.save();
+    console.log('Lab test updated successfully:', {
+      testId: updatedLabTest._id,
+      status: updatedLabTest.status,
+      hasReportFile: !!updatedLabTest.reportFile
+    });
+    
     res.json(updatedLabTest);
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error updating lab test results:', error);
+    res.status(400).json({ 
+      message: error.message || 'Error updating lab test results',
+      error: error.message 
+    });
   }
 });
 

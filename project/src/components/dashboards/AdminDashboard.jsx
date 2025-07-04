@@ -1,42 +1,95 @@
 import { Tab } from '@headlessui/react';
 import axios from 'axios';
-import { useEffect, useState } from 'react';
 import {
-    FaAmbulance,
-    FaBandAid,
-    FaBox,
-    FaBoxes,
-    FaCalendar,
-    FaCalendarAlt,
-    FaChartBar,
-    FaCheck,
-    FaCheckCircle,
-    FaClock,
-    FaCog,
-    FaEdit,
-    FaExclamationCircle,
-    FaExclamationTriangle,
-    FaFileInvoiceDollar,
-    FaFilter,
-    FaFlask,
-    FaHeartbeat,
-    FaPills,
-    FaPlus,
-    FaSearch,
-    FaStethoscope,
-    FaSyringe,
-    FaTimes,
-    FaTimesCircle,
-    FaTrash,
-    FaUserCheck,
-    FaUserEdit,
-    FaUserInjured,
-    FaUserMd,
-    FaUserPlus,
-    FaUsers,
-    FaUserSlash,
-    FaXRay
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LinearScale,
+  LineElement,
+  PointElement,
+  Title,
+  Tooltip,
+} from 'chart.js';
+import { useEffect, useState } from 'react';
+import { Bar, Line, Pie } from 'react-chartjs-2';
+import {
+  FaAmbulance,
+  FaArrowUp,
+  FaBandAid,
+  FaBox,
+  FaBoxes,
+  FaCalendar,
+  FaCalendarAlt,
+  FaChartBar,
+  FaCheck,
+  FaCheckCircle,
+  FaClock,
+  FaDatabase,
+  FaDownload,
+  FaEdit,
+  FaExclamationCircle,
+  FaExclamationTriangle,
+  FaFileInvoiceDollar,
+  FaFilter,
+  FaFlask,
+  FaHeartbeat,
+  FaPills,
+  FaPlus,
+  FaSearch,
+  FaStethoscope,
+  FaSyringe,
+  FaTimes,
+  FaTimesCircle,
+  FaTrash,
+  FaUserCheck,
+  FaUserEdit,
+  FaUserInjured,
+  FaUserMd,
+  FaUserPlus,
+  FaUsers,
+  FaUserSlash,
+  FaXRay
 } from 'react-icons/fa';
+
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+);
+
+// Add this validation function at the top level
+const validateReportDates = (startDate, endDate) => {
+  if (!startDate || !endDate) {
+    return 'Start date and end date are required';
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const today = new Date();
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return 'Invalid date format';
+  }
+
+  if (end < start) {
+    return 'End date cannot be before start date';
+  }
+
+  if (start > today) {
+    return 'Start date cannot be in the future';
+  }
+
+  return null;
+};
 
 function AdminDashboard() {
   const [users, setUsers] = useState([]);
@@ -61,6 +114,12 @@ function AdminDashboard() {
     address: '',
     bloodGroup: '',
     medicalHistory: '',
+    isCharusatStudent: false,
+    studentId: '',
+    studentBranch: '',
+    studentInstitute: '',
+    studentBatch: '',
+    counselorApproval: 'pending',
     // Counselor specific fields
     designation: '',
     expertise: '',
@@ -131,6 +190,8 @@ function AdminDashboard() {
   const [patients, setPatients] = useState([]);
   const [appointmentError, setAppointmentError] = useState('');
   const [appointmentSuccess, setAppointmentSuccess] = useState('');
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
   // Add these state variables after the existing useState declarations
   const [patientSearchTerm, setPatientSearchTerm] = useState('');
@@ -213,6 +274,34 @@ function AdminDashboard() {
     notes: ''
   });
 
+  // Add Reports related state
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [newReport, setNewReport] = useState({
+    type: '',
+    department: '',
+    startDate: '',
+    endDate: '',
+    format: 'pdf',
+    isScheduled: false,
+    frequency: 'daily'
+  });
+  const [reportStats, setReportStats] = useState({
+    totalReports: 0,
+    scheduledReports: 0,
+    totalDownloads: 0,
+    storageUsed: '0 MB'
+  });
+  const [recentReports, setRecentReports] = useState([]);
+  const [selectedAnalytics, setSelectedAnalytics] = useState('revenue');
+  const [scheduledReports, setScheduledReports] = useState([]);
+
+  // Add these state variables at the top with other state declarations
+  const [notificationSettings, setNotificationSettings] = useState({
+    emailNotifications: true,
+    smsAlerts: true,
+    systemUpdates: true
+  });
+
   // Add inventory useEffect with polling
   useEffect(() => {
     const fetchInventoryData = async () => {
@@ -225,19 +314,20 @@ function AdminDashboard() {
             headers: { Authorization: `Bearer ${token}` }
           })
         ]);
-        setInventory(inventoryRes.data);
+        
+        // Only update if the data has actually changed
+        if (JSON.stringify(inventoryRes.data) !== JSON.stringify(inventory)) {
+          setInventory(inventoryRes.data);
+        }
         setInventoryStats(statsRes.data);
       } catch (error) {
         console.error('Error fetching inventory data:', error);
       }
     };
 
-    if (token) {
-      fetchInventoryData();
-      // Set up polling every 5 seconds
-      const interval = setInterval(fetchInventoryData, 5000);
-      return () => clearInterval(interval);
-    }
+    fetchInventoryData();
+    const interval = setInterval(fetchInventoryData, 10000); // Increased to 10 seconds
+    return () => clearInterval(interval);
   }, [token]);
 
   // Add dispatch useEffect with polling
@@ -610,7 +700,13 @@ function AdminDashboard() {
           age: newUser.age,
           address: newUser.address,
           bloodGroup: newUser.bloodGroup,
-          medicalHistory: newUser.medicalHistory
+          medicalHistory: newUser.medicalHistory,
+          isCharusatStudent: newUser.isCharusatStudent,
+          studentId: newUser.studentId,
+          studentBranch: newUser.studentBranch,
+          studentInstitute: newUser.studentInstitute,
+          studentBatch: newUser.studentBatch,
+          counselorApproval: newUser.counselorApproval
         }),
         ...(newUser.role === 'counselor' && {
           designation: newUser.designation,
@@ -743,6 +839,12 @@ function AdminDashboard() {
         if (newUser.address !== editingUser.address) updateData.address = newUser.address;
         if (newUser.bloodGroup !== editingUser.bloodGroup) updateData.bloodGroup = newUser.bloodGroup;
         if (newUser.medicalHistory !== editingUser.medicalHistory) updateData.medicalHistory = newUser.medicalHistory;
+        if (newUser.isCharusatStudent !== editingUser.isCharusatStudent) updateData.isCharusatStudent = newUser.isCharusatStudent;
+        if (newUser.studentId !== editingUser.studentId) updateData.studentId = newUser.studentId;
+        if (newUser.studentBranch !== editingUser.studentBranch) updateData.studentBranch = newUser.studentBranch;
+        if (newUser.studentInstitute !== editingUser.studentInstitute) updateData.studentInstitute = newUser.studentInstitute;
+        if (newUser.studentBatch !== editingUser.studentBatch) updateData.studentBatch = newUser.studentBatch;
+        if (newUser.counselorApproval !== editingUser.counselorApproval) updateData.counselorApproval = newUser.counselorApproval;
       } else if (newUser.role === 'counselor') {
         if (newUser.designation !== editingUser.designation) updateData.designation = newUser.designation;
         if (newUser.department !== editingUser.department) updateData.department = newUser.department;
@@ -1012,15 +1114,26 @@ function AdminDashboard() {
         }
       );
       
+      // Update the staff members list without redirecting
       setStaffMembers(prevStaff => 
         prevStaff.map(staff => 
           staff._id === staffId ? { ...staff, shift: newShift } : staff
         )
       );
       setScheduleSuccess('Schedule updated successfully');
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setScheduleSuccess('');
+      }, 3000);
     } catch (error) {
       console.error('Error updating schedule:', error);
       setScheduleError(error.response?.data?.error || 'Error updating schedule');
+      
+      // Clear error message after 3 seconds
+      setTimeout(() => {
+        setScheduleError('');
+      }, 3000);
     } finally {
       setIsLoading(false);
     }
@@ -1391,49 +1504,95 @@ function AdminDashboard() {
     }
   }, [token]);
 
-  // Add this function to handle appointment creation
+  const handleDoctorSelect = async (doctorId) => {
+    setNewAppointment(prev => ({ ...prev, doctorId }));
+    setAvailableSlots([]);
+  };
+
+  const handleDateSelect = async (date) => {
+    setNewAppointment(prev => ({ ...prev, date }));
+    if (!newAppointment.doctorId) {
+      setAppointmentError('Please select a doctor first');
+      return;
+    }
+
+    setLoadingSlots(true);
+    try {
+      const response = await axios.get(
+        `http://localhost:3000/api/appointments/available-slots/${newAppointment.doctorId}/${date}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (response.data.error) {
+        throw new Error(response.data.error);
+      }
+
+      setAvailableSlots(response.data.availableSlots);
+      setAppointmentError('');
+    } catch (error) {
+      setAppointmentError(error.response?.data?.error || error.message || 'Error fetching available slots');
+      setAvailableSlots([]);
+    } finally {
+      setLoadingSlots(false);
+    }
+  };
+
   const handleCreateAppointment = async (e) => {
     e.preventDefault();
-    try {
+    setAppointmentError('');
+    setAppointmentSuccess('');
+
       // Validate required fields
       if (!newAppointment.patientId || !newAppointment.doctorId || !newAppointment.date || !newAppointment.time) {
         setAppointmentError('Please fill in all required fields');
         return;
       }
 
-      // Get the selected doctor's department
-      const selectedDoctor = doctors.find(d => d._id === newAppointment.doctorId);
-      if (!selectedDoctor) {
+    // Check if the selected slot is still available
+    const selectedSlot = availableSlots.find(slot => slot.time === newAppointment.time);
+    if (!selectedSlot || !selectedSlot.isAvailable) {
+      setAppointmentError('The selected time slot is no longer available. Please select another time.');
+        return;
+      }
+
+    try {
+      // Check for existing appointments at the same time
+      const existingAppointment = appointments.find(
+        app => app.date === newAppointment.date && 
+        app.time === newAppointment.time &&
+        app.status !== 'cancelled'
+      );
+
+      if (existingAppointment) {
+        setAppointmentError('There is already an appointment scheduled for this time');
+        return;
+      }
+
+      // Get the selected doctor's details
+      const doctor = doctors.find(d => d._id === newAppointment.doctorId);
+      if (!doctor) {
         setAppointmentError('Selected doctor not found');
         return;
       }
 
-      // Create appointment data with proper field names
-      const appointmentData = {
-        patientId: newAppointment.patientId,
-        doctorId: newAppointment.doctorId,
-        date: newAppointment.date,
-        time: newAppointment.time,
-        department: selectedDoctor.department,
-        type: newAppointment.type || 'consultation',
-        symptoms: newAppointment.symptoms || '',
-        notes: newAppointment.notes || ''
-      };
+      // Create the appointment
+      const response = await axios.post(
+        'http://localhost:3000/api/appointments',
+        {
+          ...newAppointment,
+          doctorName: `${doctor.firstName} ${doctor.lastName}`,
+          status: 'scheduled'
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
-      console.log('Sending appointment data:', appointmentData); // Debug log
+      if (response.data.error) {
+        throw new Error(response.data.error);
+      }
 
-      const response = await axios.post('http://localhost:3000/api/appointments', appointmentData, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.data) {
-        // Update appointments list
-        setAppointments([...appointments, response.data]);
-        
-        // Reset form
+      // Update the appointments list
+      setAppointments(prev => [...prev, response.data]);
+      setAppointmentSuccess('Appointment scheduled successfully!');
         setNewAppointment({
           patientId: '',
           doctorId: '',
@@ -1444,33 +1603,82 @@ function AdminDashboard() {
           notes: '',
           symptoms: ''
         });
-        setPatientSearchTerm('');
-        setAppointmentSuccess('Appointment scheduled successfully');
-      } else {
-        setAppointmentError('Failed to create appointment');
-      }
+      setAvailableSlots([]);
     } catch (error) {
-      console.error('Create appointment error:', error);
-      console.error('Error response:', error.response?.data); // Debug log
-      setAppointmentError(error.response?.data?.error || 'Error scheduling appointment');
+      setAppointmentError(error.response?.data?.error || error.message || 'Error scheduling appointment');
     }
   };
 
   // Add this function to handle appointment status updates
   const handleUpdateAppointmentStatus = async (appointmentId, newStatus) => {
     try {
-      await axios.patch(
+      // Validate appointment exists
+      const appointment = appointments.find(apt => apt._id === appointmentId);
+      if (!appointment) {
+        setAppointmentError('Appointment not found');
+        return;
+      }
+
+      // Validate status transition
+      const validTransitions = {
+        'scheduled': ['in-progress', 'cancelled'],
+        'in-progress': ['completed', 'cancelled'],
+        'completed': ['cancelled']
+      };
+
+      if (!validTransitions[appointment.status]?.includes(newStatus)) {
+        setAppointmentError(`Cannot change status from ${appointment.status} to ${newStatus}`);
+        return;
+      }
+
+      const response = await axios.patch(
         `http://localhost:3000/api/appointments/${appointmentId}/status`,
         { status: newStatus },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          } 
+        }
       );
 
-      setAppointments(appointments.map(apt => 
-        apt._id === appointmentId ? { ...apt, status: newStatus } : apt
-      ));
-      setAppointmentSuccess('Appointment status updated successfully');
+      if (response.data) {
+        // Update the appointments list with the new status
+        setAppointments(appointments.map(apt => 
+          apt._id === appointmentId ? { ...apt, status: newStatus } : apt
+        ));
+        
+        // Update appointment stats
+        setAppointmentStats(prev => {
+          const newStats = { ...prev };
+          if (newStats.byStatus) {
+            // Decrease count of old status
+            if (newStats.byStatus[appointment.status]) {
+              newStats.byStatus[appointment.status]--;
+            }
+            // Increase count of new status
+            newStats.byStatus[newStatus] = (newStats.byStatus[newStatus] || 0) + 1;
+          }
+          return newStats;
+        });
+
+        setAppointmentSuccess('Appointment status updated successfully');
+      } else {
+        setAppointmentError('Failed to update appointment status: No response data');
+      }
     } catch (error) {
-      setAppointmentError(error.response?.data?.error || 'Error updating appointment status');
+      console.error('Error updating appointment status:', error);
+      if (error.response?.status === 404) {
+        setAppointmentError('Appointment not found');
+      } else if (error.response?.status === 400) {
+        setAppointmentError(error.response.data.error || 'Invalid request');
+      } else if (error.response?.status === 401) {
+        setAppointmentError('Please log in again to continue');
+      } else if (error.response?.status === 403) {
+        setAppointmentError('You do not have permission to update this appointment');
+      } else {
+        setAppointmentError(error.response?.data?.details || error.message || 'Error updating appointment status');
+      }
     }
   };
 
@@ -1573,6 +1781,362 @@ function AdminDashboard() {
     }
   };
 
+  // Add Reports related functions
+  const handleGenerateReport = async (e) => {
+    e.preventDefault();
+    try {
+      // Validate dates
+      const dateError = validateReportDates(newReport.startDate, newReport.endDate);
+      if (dateError) {
+        setError(dateError);
+        return;
+      }
+
+      // Validate required fields
+      if (!newReport.type) {
+        setError('Please select a report type');
+        return;
+      }
+
+      setError('');
+      setSuccess('');
+      setIsLoading(true);
+
+      const response = await axios.post(
+        'http://localhost:3000/api/reports',
+        {
+          ...newReport,
+          format: newReport.format.toLowerCase()
+        },
+        {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.data) {
+        // Add the new report to the list
+        setRecentReports([response.data.report, ...recentReports]);
+        
+        // Reset form
+        setNewReport({
+          type: '',
+          department: '',
+          startDate: '',
+          endDate: '',
+          format: 'pdf',
+          isScheduled: false,
+          frequency: 'daily'
+        });
+        
+        setShowReportForm(false);
+        setSuccess('Report generation started. Please check back in a few moments.');
+
+        // Poll for report status
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResponse = await axios.get(`http://localhost:3000/api/reports/${response.data.report._id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            if (statusResponse.data.status === 'completed') {
+              clearInterval(pollInterval);
+              setSuccess('Report generated successfully!');
+              // Update report stats
+              const statsRes = await axios.get('http://localhost:3000/api/reports/stats', {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              setReportStats(statsRes.data);
+            } else if (statusResponse.data.status === 'failed') {
+              clearInterval(pollInterval);
+              setError('Report generation failed. Please try again.');
+            }
+          } catch (error) {
+            clearInterval(pollInterval);
+            setError('Error checking report status');
+          }
+        }, 5000); // Poll every 5 seconds
+
+        // Clear polling after 5 minutes
+        setTimeout(() => {
+          clearInterval(pollInterval);
+        }, 300000);
+      }
+    } catch (error) {
+      console.error('Error generating report:', error);
+      setError(error.response?.data?.error || 'Error generating report. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDownloadReport = async (reportId) => {
+    try {
+      setError('');
+      setSuccess('');
+      setIsLoading(true);
+      
+      const response = await axios.get(
+        `http://localhost:3000/api/reports/${reportId}/download`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        }
+      );
+
+      // Create a download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `report-${reportId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      
+      setSuccess('Report downloaded successfully');
+    } catch (error) {
+      console.error('Error downloading report:', error);
+      setError(error.response?.data?.error || 'Error downloading report');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteReport = async (reportId) => {
+    if (window.confirm('Are you sure you want to delete this report?')) {
+      try {
+        await axios.delete(`http://localhost:3000/api/reports/${reportId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        setRecentReports(recentReports.filter(report => report.id !== reportId));
+        
+        // Update stats
+        setReportStats(prev => ({
+          ...prev,
+          totalReports: prev.totalReports - 1
+        }));
+      } catch (error) {
+        console.error('Error deleting report:', error);
+      }
+    }
+  };
+
+  const handleCancelScheduledReport = async (reportId) => {
+    if (window.confirm('Are you sure you want to cancel this scheduled report?')) {
+      try {
+        await axios.delete(`http://localhost:3000/api/reports/scheduled/${reportId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        setScheduledReports(scheduledReports.filter(report => report.id !== reportId));
+        
+        // Update stats
+        setReportStats(prev => ({
+          ...prev,
+          scheduledReports: prev.scheduledReports - 1
+        }));
+      } catch (error) {
+        console.error('Error canceling scheduled report:', error);
+      }
+    }
+  };
+
+  // Add Reports data fetching
+  useEffect(() => {
+    const fetchReportsData = async () => {
+      try {
+        const [statsRes, recentRes, scheduledRes] = await Promise.all([
+          axios.get('http://localhost:3000/api/reports/stats', {
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          axios.get('http://localhost:3000/api/reports/recent', {
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          axios.get('http://localhost:3000/api/reports/scheduled', {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        ]);
+
+        setReportStats(statsRes.data);
+        setRecentReports(recentRes.data);
+        setScheduledReports(scheduledRes.data);
+      } catch (error) {
+        console.error('Error fetching reports data:', error);
+      }
+    };
+
+    if (token) {
+      fetchReportsData();
+    }
+  }, [token]);
+
+  // Add these state variables for analytics
+  const [analyticsData, setAnalyticsData] = useState({
+    revenue: {
+      labels: [],
+      data: []
+    },
+    patients: {
+      labels: [],
+      data: []
+    },
+    appointments: {
+      labels: [],
+      data: []
+    }
+  });
+
+  // Add this state for analytics error
+  const [analyticsError, setAnalyticsError] = useState(null);
+
+  // Update the fetchAnalyticsData function
+  const fetchAnalyticsData = async () => {
+    try {
+      console.log('Fetching analytics data...');
+      console.log('Token:', token); // Debug log to verify token exists
+      
+      // Initialize default data structure
+      const defaultData = {
+        revenue: { labels: [], data: [] },
+        patients: { labels: [], data: [] },
+        appointments: { labels: [], data: [] }
+      };
+
+      // Fetch revenue data
+      const revenueRes = await axios.get('http://localhost:3000/api/billing/analytics', {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }).catch(error => {
+        console.error('Revenue data fetch error:', error);
+        return { data: [] };
+      });
+
+      // Fetch patient data
+      const patientsRes = await axios.get('http://localhost:3000/api/users/analytics?role=patient', {
+        headers: { Authorization: `Bearer ${token}` }
+      }).catch(error => {
+        console.error('Patient data fetch error:', error);
+        return { data: [] };
+      });
+
+      // Fetch appointment data
+      const appointmentsRes = await axios.get('http://localhost:3000/api/appointments/analytics', {
+        headers: { Authorization: `Bearer ${token}` }
+      }).catch(error => {
+        console.error('Appointment data fetch error:', error);
+        return { data: [] };
+      });
+
+      // Process revenue data
+      const revenueData = revenueRes.data || [];
+      defaultData.revenue = {
+        labels: revenueData.map(item => new Date(item.date).toLocaleDateString()),
+        data: revenueData.map(item => item.amount || 0)
+      };
+
+      // Process patient data
+      const patientData = patientsRes.data || [];
+      defaultData.patients = {
+        labels: patientData.map(item => new Date(item.date).toLocaleDateString()),
+        data: patientData.map(item => item.count || 0)
+      };
+
+      // Process appointment data
+      const appointmentData = appointmentsRes.data || [];
+      defaultData.appointments = {
+        labels: appointmentData.map(item => new Date(item.date).toLocaleDateString()),
+        data: appointmentData.map(item => item.count || 0)
+      };
+
+      console.log('Processed analytics data:', defaultData);
+      setAnalyticsData(defaultData);
+      setAnalyticsError(null);
+
+    } catch (error) {
+      console.error('Analytics data fetch error:', error);
+      setAnalyticsError('Failed to fetch analytics data. Please try again later.');
+      setAnalyticsData({
+        revenue: { labels: [], data: [] },
+        patients: { labels: [], data: [] },
+        appointments: { labels: [], data: [] }
+      });
+    }
+  };
+
+  // Add useEffect to fetch analytics data
+  useEffect(() => {
+    if (token) {
+      fetchAnalyticsData();
+      const interval = setInterval(fetchAnalyticsData, 300000); // Refresh every 5 minutes
+      return () => clearInterval(interval);
+    }
+  }, [token]);
+
+  // Update the chart options
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: {
+        beginAtZero: true,
+        ticks: {
+          callback: value => selectedAnalytics === 'revenue' ? `₹${value}` : value
+        }
+      }
+    },
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top',
+      },
+      title: {
+        display: true,
+        text: selectedAnalytics === 'revenue' ? 'Revenue Analysis' :
+              selectedAnalytics === 'patients' ? 'Patient Trends' : 'Appointment Statistics'
+      }
+    }
+  };
+
+  const fetchAppointments = async () => {
+    try {
+      const response = await axios.get(
+        'http://localhost:3000/api/appointments',
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          } 
+        }
+      );
+
+      if (response.data) {
+        // Sort appointments by date and time
+        const sortedAppointments = response.data.sort((a, b) => {
+          const dateA = new Date(a.date);
+          const dateB = new Date(b.date);
+          if (dateA.getTime() === dateB.getTime()) {
+            return a.time.localeCompare(b.time);
+          }
+          return dateA.getTime() - dateB.getTime();
+        });
+        setAppointments(sortedAppointments);
+      }
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      setAppointmentError('Error fetching appointments');
+    }
+  };
+
+  // Add useEffect to fetch appointments when component mounts and when appointments change
+  useEffect(() => {
+    fetchAppointments();
+  }, [token]);
+
   return (
     <div className="space-y-8 p-6 bg-gray-50 min-h-screen max-w-[3000px] mx-auto">
       {isLoading ? (
@@ -1669,16 +2233,6 @@ function AdminDashboard() {
           }>
             <FaChartBar className="text-lg" />
             <span>Reports</span>
-          </Tab>
-          <Tab className={({ selected }) =>
-            `flex items-center space-x-2 px-6 py-3 rounded-lg transition-all duration-200 whitespace-nowrap ${
-              selected 
-                ? 'bg-[var(--accent)] text-white shadow-md transform scale-105' 
-                : 'text-gray-600 hover:text-[var(--accent)] hover:bg-gray-50'
-            }`
-          }>
-            <FaCog className="text-lg" />
-            <span>Settings</span>
           </Tab>
         </Tab.List>
 
@@ -1900,6 +2454,89 @@ function AdminDashboard() {
                                 <option value="AB-">AB-</option>
                               </select>
                             </div>
+                            <div className="space-y-2">
+                              <label className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  checked={newUser.isCharusatStudent}
+                                  onChange={(e) => setNewUser({ ...newUser, isCharusatStudent: e.target.checked })}
+                                  className="form-checkbox h-4 w-4 text-blue-600"
+                                />
+                                <span className="text-sm font-medium text-gray-700">CHARUSAT Student</span>
+                              </label>
+                            </div>
+
+                            {newUser.isCharusatStudent && (
+                              <div className="space-y-4 p-4 bg-blue-50 rounded-lg">
+                                <div className="space-y-2">
+                                  <label className="block text-sm font-medium text-gray-700">Student ID</label>
+                                  <input
+                                    type="text"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all bg-white"
+                                    value={newUser.studentId}
+                                    onChange={(e) => setNewUser({ ...newUser, studentId: e.target.value })}
+                                    placeholder="Enter student ID"
+                                    required
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="block text-sm font-medium text-gray-700">Institute</label>
+                                  <select
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all bg-white"
+                                    value={newUser.studentInstitute}
+                                    onChange={(e) => setNewUser({ ...newUser, studentInstitute: e.target.value })}
+                                    required
+                                  >
+                                    <option value="">Select Institute</option>
+                                    <option value="CSPIT">CSPIT</option>
+                                    <option value="DEPSTAR">DEPSTAR</option>
+                                    <option value="PDPIAS">PDPIAS</option>
+                                    <option value="RPCP">RPCP</option>
+                                    <option value="ARIP">ARIP</option>
+                                    <option value="MTIN">MTIN</option>
+                                    <option value="CIPS">CIPS</option>
+                                    <option value="I2IM">I2IM</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="block text-sm font-medium text-gray-700">Branch</label>
+                                  <select
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all bg-white"
+                                    value={newUser.studentBranch}
+                                    onChange={(e) => setNewUser({ ...newUser, studentBranch: e.target.value })}
+                                    required
+                                  >
+                                    <option value="">Select Branch</option>
+                                    <option value="Computer Science">Computer Science</option>
+                                    <option value="Information Technology">Information Technology</option>
+                                    <option value="Electronics">Electronics</option>
+                                    <option value="Mechanical">Mechanical</option>
+                                    <option value="Civil">Civil</option>
+                                    <option value="Chemical">Chemical</option>
+                                    <option value="Biotechnology">Biotechnology</option>
+                                    <option value="Pharmacy">Pharmacy</option>
+                                    <option value="Business">Business</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="block text-sm font-medium text-gray-700">Batch</label>
+                                  <input
+                                    type="text"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all bg-white"
+                                    value={newUser.studentBatch}
+                                    onChange={(e) => setNewUser({ ...newUser, studentBatch: e.target.value })}
+                                    placeholder="Enter batch (e.g., 2023-24)"
+                                    required
+                                  />
+                                </div>
+                                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                  <p className="text-sm text-yellow-800">
+                                    Note: CHARUSAT students require counselor approval for appointments. Appointments will be free of charge after approval.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="space-y-2">
                               <label className="block text-sm font-medium text-gray-700">Medical History</label>
                               <textarea 
@@ -2308,6 +2945,41 @@ function AdminDashboard() {
                                   </div>
                                 </div>
                               )}
+
+                              {/* Display CHARUSAT student info in user card if applicable */}
+                              {user.role === 'patient' && user.isCharusatStudent && (
+                                <div className="mt-2 p-3 bg-blue-50 rounded-lg">
+                                  <h5 className="font-medium text-blue-800 mb-2">CHARUSAT Student Details</h5>
+                                  <div className="grid grid-cols-2 gap-2 text-sm">
+                                    <div>
+                                      <span className="text-gray-600">Student ID:</span>
+                                      <p className="font-medium">{user.studentId || 'N/A'}</p>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-600">Institute:</span>
+                                      <p className="font-medium">{user.studentInstitute || 'N/A'}</p>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-600">Branch:</span>
+                                      <p className="font-medium">{user.studentBranch || 'N/A'}</p>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-600">Batch:</span>
+                                      <p className="font-medium">{user.studentBatch || 'N/A'}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                      <span className="text-gray-600">Counselor Approval:</span>
+                                      <p className={`font-medium ${
+                                        (user.counselorApproval || 'pending') === 'approved' ? 'text-green-600' :
+                                        (user.counselorApproval || 'pending') === 'rejected' ? 'text-red-600' :
+                                        'text-yellow-600'
+                                      }`}>
+                                        {((user.counselorApproval || 'pending').charAt(0).toUpperCase() + (user.counselorApproval || 'pending').slice(1))}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                         </div>
                       </div>
                     </div>
@@ -2372,8 +3044,8 @@ function AdminDashboard() {
               <div className="bg-white rounded-xl p-6 shadow-lg">
                 <h4 className="text-lg font-semibold mb-4">Department-wise Distribution</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {appointmentStats.byDepartment?.map((dept, index) => (
-                    <div key={index} className="bg-gray-50 rounded-lg p-4">
+                  {appointmentStats.byDepartment?.map((dept) => (
+                    <div key={dept.department} className="bg-gray-50 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="font-medium text-gray-800">{dept.department}</h5>
                         <span className="text-sm text-gray-500">Total: {dept.total}</span>
@@ -2455,11 +3127,11 @@ function AdminDashboard() {
                                 <div>
                                 <div className="flex items-center gap-2">
                                   <FaUserInjured className="text-blue-500" />
-                                  <p className="font-medium">{apt.patientName}</p>
+                                  <p className="font-medium">{apt.patient?.name || 'Patient not assigned'}</p>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <FaUserMd className="text-blue-500" />
-                                  <p className="text-sm text-gray-600">Dr. {apt.doctorName} - {apt.department}</p>
+                                  <p className="text-sm text-gray-600">Dr. {apt.doctor?.name || 'Doctor not assigned'} - {apt.department}</p>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <FaClock className="text-blue-500" />
@@ -2523,11 +3195,11 @@ function AdminDashboard() {
                                 <div>
                                 <div className="flex items-center gap-2">
                                   <FaUserInjured className="text-green-500" />
-                                  <p className="font-medium">{apt.patientName}</p>
+                                  <p className="font-medium">{apt.patient?.name || 'Patient not assigned'}</p>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <FaUserMd className="text-green-500" />
-                                  <p className="text-sm text-gray-600">Dr. {apt.doctorName} - {apt.department}</p>
+                                  <p className="text-sm text-gray-600">Dr. {apt.doctor?.name || 'Doctor not assigned'} - {apt.department}</p>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <FaClock className="text-green-500" />
@@ -2582,29 +3254,36 @@ function AdminDashboard() {
               <div className="bg-white rounded-xl p-6 shadow-lg">
                   <h4 className="text-lg font-semibold mb-4">Schedule New Appointment</h4>
                   <form onSubmit={handleCreateAppointment} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Patient</label>
                         <div className="relative">
                           <input
                             type="text"
                           className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="Search patient by name..."
                             value={patientSearchTerm}
-                            onChange={(e) => setPatientSearchTerm(e.target.value)}
-                            onFocus={() => setShowPatientDropdown(true)}
-                            required
+                        onChange={(e) => {
+                          setPatientSearchTerm(e.target.value);
+                          setShowPatientDropdown(true);
+                          const filtered = patients.filter(patient =>
+                            patient.name.toLowerCase().includes(e.target.value.toLowerCase())
+                          );
+                          setFilteredPatients(filtered);
+                        }}
+                        placeholder="Search patient..."
                           />
                           {showPatientDropdown && filteredPatients.length > 0 && (
-                            <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                        <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-60 overflow-y-auto">
                               {filteredPatients.map(patient => (
                                 <div
                                   key={patient._id}
                                   className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
-                                  onClick={() => handlePatientSelect(patient)}
-                                >
-                                  <div className="font-medium">{patient.name}</div>
-                                  <div className="text-sm text-gray-600">{patient.email}</div>
+                              onClick={() => {
+                                setNewAppointment(prev => ({ ...prev, patientId: patient._id }));
+                                setPatientSearchTerm(patient.name);
+                                setShowPatientDropdown(false);
+                              }}
+                            >
+                              {patient.name} - {patient.email}
                                 </div>
                               ))}
                             </div>
@@ -2616,7 +3295,7 @@ function AdminDashboard() {
                         <select 
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           value={newAppointment.doctorId}
-                          onChange={(e) => setNewAppointment({ ...newAppointment, doctorId: e.target.value })}
+                      onChange={(e) => handleDoctorSelect(e.target.value)}
                           required
                         >
                           <option value="">Select Doctor</option>
@@ -2633,25 +3312,41 @@ function AdminDashboard() {
                           type="date" 
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           value={newAppointment.date}
-                          onChange={(e) => setNewAppointment({ ...newAppointment, date: e.target.value })}
+                      onChange={(e) => handleDateSelect(e.target.value)}
+                      min={new Date().toISOString().split('T')[0]}
                           required
                         />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Time</label>
+                    {loadingSlots ? (
+                      <div className="w-full px-3 py-2 border rounded-lg bg-gray-50">
+                        <span className="text-gray-500">Loading available slots...</span>
+                      </div>
+                    ) : availableSlots.length === 0 ? (
+                      <div className="w-full px-3 py-2 border rounded-lg bg-gray-50">
+                        <span className="text-gray-500">Select a date to see available slots</span>
+                      </div>
+                    ) : (
                         <select 
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           value={newAppointment.time}
                           onChange={(e) => setNewAppointment({ ...newAppointment, time: e.target.value })}
                           required
                         >
-                          <option value="">Select Time</option>
-                          {Array.from({ length: 17 }, (_, i) => i + 9).map(hour => (
-                            <option key={hour} value={`${hour.toString().padStart(2, '0')}:00`}>
-                              {hour.toString().padStart(2, '0')}:00
+                        <option value="">Select time</option>
+                        {availableSlots.map(slot => (
+                          <option 
+                            key={slot.time} 
+                            value={slot.time}
+                            disabled={!slot.isAvailable}
+                            className={!slot.isAvailable ? 'text-gray-400' : ''}
+                          >
+                            {slot.time} {!slot.isAvailable && `(${slot.reason})`}
                             </option>
                           ))}
                         </select>
+                    )}
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
@@ -2666,39 +3361,26 @@ function AdminDashboard() {
                           <option value="emergency">Emergency</option>
                           <option value="routine-checkup">Routine Checkup</option>
                         </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
-                        <select 
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          value={newAppointment.department}
-                          onChange={(e) => setNewAppointment({ ...newAppointment, department: e.target.value })}
-                          required
-                        >
-                          <option value="">Select Department</option>
-                          {[...new Set(doctors.map(d => d.department))].map(dept => (
-                            <option key={dept} value={dept}>{dept}</option>
-                          ))}
-                        </select>
-                      </div>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Symptoms</label>
                       <textarea 
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        rows="3"
                         value={newAppointment.symptoms}
                         onChange={(e) => setNewAppointment({ ...newAppointment, symptoms: e.target.value })}
-                      />
+                      rows="3"
+                      placeholder="Enter patient symptoms..."
+                    ></textarea>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                       <textarea 
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        rows="3"
                         value={newAppointment.notes}
                         onChange={(e) => setNewAppointment({ ...newAppointment, notes: e.target.value })}
-                      />
+                      rows="2"
+                      placeholder="Additional notes..."
+                    ></textarea>
                     </div>
                     <button 
                       type="submit" 
@@ -4046,58 +4728,380 @@ function AdminDashboard() {
 
           {/* Reports Panel */}
           <Tab.Panel>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="card">
-                <h3 className="text-xl font-semibold mb-4">Generate Reports</h3>
-                <div className="space-y-4">
-                  <div className="p-4 bg-[var(--accent)] rounded-lg cursor-pointer">
-                    <p className="font-semibold">Patient Statistics</p>
-                    <p className="text-sm">View patient admission and discharge trends</p>
+            <div className="space-y-6">
+              {/* Report Overview Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg text-white">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Total Reports</h3>
+                    <FaChartBar className="text-2xl opacity-80" />
                   </div>
-                  <div className="p-4 bg-[var(--accent)] rounded-lg cursor-pointer">
-                    <p className="font-semibold">Financial Reports</p>
-                    <p className="text-sm">Revenue and expense analysis</p>
+                  <p className="text-3xl font-bold">{reportStats?.totalReports || 0}</p>
+                  <p className="text-sm opacity-80 mt-2">Generated this month</p>
+                </div>
+                <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 shadow-lg text-white">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Scheduled</h3>
+                    <FaCalendarAlt className="text-2xl opacity-80" />
                   </div>
-                  <div className="p-4 bg-[var(--accent)] rounded-lg cursor-pointer">
-                    <p className="font-semibold">Inventory Reports</p>
-                    <p className="text-sm">Stock levels and usage patterns</p>
+                  <p className="text-3xl font-bold">{reportStats?.scheduledReports || 0}</p>
+                  <p className="text-sm opacity-80 mt-2">Upcoming reports</p>
+                </div>
+                <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 shadow-lg text-white">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Downloads</h3>
+                    <FaDownload className="text-2xl opacity-80" />
                   </div>
-                  <div className="p-4 bg-[var(--accent)] rounded-lg cursor-pointer">
-                    <p className="font-semibold">Staff Performance</p>
-                    <p className="text-sm">Attendance and productivity metrics</p>
+                  <p className="text-3xl font-bold">{reportStats?.totalDownloads || 0}</p>
+                  <p className="text-sm opacity-80 mt-2">This month</p>
+                </div>
+                <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-6 shadow-lg text-white">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Storage Used</h3>
+                    <FaDatabase className="text-2xl opacity-80" />
                   </div>
+                  <p className="text-3xl font-bold">{reportStats?.storageUsed || '0 MB'}</p>
+                  <p className="text-sm opacity-80 mt-2">Total space used</p>
                 </div>
               </div>
 
-              <div className="card">
-                <h3 className="text-xl font-semibold mb-4">Custom Report</h3>
-                <form className="space-y-4">
-                  <div>
-                    <label className="block mb-2">Report Type</label>
-                    <select className="input w-full">
-                      <option>Patient Statistics</option>
-                      <option>Financial Summary</option>
-                      <option>Inventory Status</option>
-                      <option>Staff Performance</option>
-                    </select>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Report Generation Section */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-800">Generate Reports</h3>
+                      <p className="text-gray-600">Create custom reports based on your requirements</p>
+                    </div>
+                    <button
+                      onClick={() => setShowReportForm(!showReportForm)}
+                      className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-all flex items-center gap-2"
+                    >
+                      <FaPlus /> New Report
+                    </button>
                   </div>
-                  <div>
-                    <label className="block mb-2">Date Range</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input type="date" className="input" placeholder="Start Date" />
-                      <input type="date" className="input" placeholder="End Date" />
+
+                  {showReportForm && (
+                    <form onSubmit={handleGenerateReport} className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Report Type</label>
+                          <select
+                            value={newReport.type}
+                            onChange={(e) => setNewReport({ ...newReport, type: e.target.value })}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            required
+                          >
+                            <option value="">Select Report Type</option>
+                            <option value="revenue">Financial Analysis</option>
+                            <option value="appointments">Appointment Analytics</option>
+                            <option value="inventory">Inventory Status</option>
+                            <option value="staff">Staff Performance</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
+                          <select
+                            value={newReport.department}
+                            onChange={(e) => setNewReport({ ...newReport, department: e.target.value })}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">All Departments</option>
+                            <option value="cardiology">Cardiology</option>
+                            <option value="neurology">Neurology</option>
+                            <option value="pediatrics">Pediatrics</option>
+                            <option value="orthopedics">Orthopedics</option>
+                            <option value="dental">Dental</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
+                          <input
+                            type="date"
+                            value={newReport.startDate}
+                            onChange={(e) => setNewReport({ ...newReport, startDate: e.target.value })}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            required
+                            max={new Date().toISOString().split('T')[0]}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
+                          <input
+                            type="date"
+                            value={newReport.endDate}
+                            onChange={(e) => setNewReport({ ...newReport, endDate: e.target.value })}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            required
+                            min={newReport.startDate}
+                            max={new Date().toISOString().split('T')[0]}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Report Format</label>
+                        <div className="flex gap-4">
+                          {['PDF', 'Excel', 'CSV'].map(format => (
+                            <label key={format} className="flex items-center space-x-2 cursor-pointer">
+                              <input
+                                type="radio"
+                                name="format"
+                                value={format.toLowerCase()}
+                                checked={newReport.format === format.toLowerCase()}
+                                onChange={(e) => setNewReport({ ...newReport, format: e.target.value })}
+                                className="form-radio text-blue-500"
+                              />
+                              <span>{format}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Schedule Report</label>
+                        <div className="flex items-center gap-4">
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newReport.isScheduled}
+                              onChange={(e) => setNewReport({ ...newReport, isScheduled: e.target.checked })}
+                              className="form-checkbox text-blue-500"
+                            />
+                            <span>Schedule for later</span>
+                          </label>
+                          {newReport.isScheduled && (
+                            <select
+                              value={newReport.frequency}
+                              onChange={(e) => setNewReport({ ...newReport, frequency: e.target.value })}
+                              className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="daily">Daily</option>
+                              <option value="weekly">Weekly</option>
+                              <option value="monthly">Monthly</option>
+                            </select>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-4">
+                        <button
+                          type="button"
+                          onClick={() => setShowReportForm(false)}
+                          className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                        >
+                          Generate Report
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Recent Reports List */}
+                  <div className="mt-6">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-4">Recent Reports</h4>
+                    <div className="space-y-4">
+                      {recentReports.map(report => (
+                        <div
+                          key={report._id || report.id}
+                          className="bg-gray-50 rounded-lg p-4 flex items-center justify-between hover:shadow-md transition-shadow"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className={`p-3 rounded-full ${
+                              report.type === 'patient' ? 'bg-blue-100 text-blue-600' :
+                              report.type === 'financial' ? 'bg-green-100 text-green-600' :
+                              report.type === 'inventory' ? 'bg-purple-100 text-purple-600' :
+                              'bg-orange-100 text-orange-600'
+                            }`}>
+                              {report.type === 'patient' && <FaUserInjured />}
+                              {report.type === 'financial' && <FaChartLine />}
+                              {report.type === 'inventory' && <FaBoxes />}
+                              {report.type === 'staff' && <FaUserMd />}
+                            </div>
+                            <div>
+                              <h5 className="font-medium text-gray-800">{report.name}</h5>
+                              <p className="text-sm text-gray-600">
+                                Generated on {new Date(report.generatedAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleDownloadReport(report._id || report.id)}
+                              className="p-2 text-blue-500 hover:text-blue-700"
+                              title="Download"
+                            >
+                              <FaDownload />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteReport(report._id || report.id)}
+                              className="p-2 text-red-500 hover:text-red-700"
+                              title="Delete"
+                            >
+                              <FaTrash />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                  <div>
-                    <label className="block mb-2">Format</label>
-                    <select className="input w-full">
-                      <option>PDF</option>
-                      <option>Excel</option>
-                      <option>CSV</option>
+                </div>
+
+                {/* Analytics Dashboard */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-800">Analytics Dashboard</h3>
+                      <p className="text-gray-600">Real-time insights and trends</p>
+                    </div>
+                    <select
+                      value={selectedAnalytics}
+                      onChange={(e) => setSelectedAnalytics(e.target.value)}
+                      className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="revenue">Revenue Analysis</option>
+                      <option value="appointments">Appointment Stats</option>
                     </select>
                   </div>
-                  <button type="submit" className="btn btn-primary w-full">Generate Report</button>
-                </form>
+
+                  {/* Display Analytics Error */}
+                  {analyticsError && (
+                    <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+                      <div className="flex items-center">
+                        <FaExclamationCircle className="text-red-500 mr-3" />
+                        <span className="text-red-700">{analyticsError}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Analytics Charts */}
+                  <div className="space-y-6">
+                    {/* Revenue Chart */}
+                    {selectedAnalytics === 'revenue' && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-lg font-semibold text-gray-800 mb-4">Revenue Overview</h4>
+                      <div className="h-64 w-full">
+                          <Line
+                            data={{
+                              labels: analyticsData.revenue.labels,
+                              datasets: [
+                                {
+                                  label: 'Revenue',
+                                  data: analyticsData.revenue.data,
+                                  borderColor: 'rgb(59, 130, 246)',
+                                  backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                  tension: 0.4
+                                }
+                              ]
+                            }}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              scales: {
+                                y: {
+                                  beginAtZero: true,
+                                  ticks: {
+                                    callback: value => `₹${value}`
+                                  }
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Patient Trends */}
+                    {selectedAnalytics === 'patients' && (
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <h4 className="text-lg font-semibold text-gray-800 mb-4">Patient Trends</h4>
+                        <div className="h-64 w-full">
+                          <Bar
+                            data={{
+                              labels: analyticsData.patients.labels,
+                              datasets: [
+                                {
+                                  label: 'New Patients',
+                                  data: analyticsData.patients.data,
+                                  backgroundColor: 'rgb(34, 197, 94)'
+                                }
+                              ]
+                            }}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: false
+                            }}
+                          />
+                    </div>
+                      </div>
+                    )}
+
+                    {/* Appointment Stats */}
+                    {selectedAnalytics === 'appointments' && (
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <h4 className="text-lg font-semibold text-gray-800 mb-4">Appointment Statistics</h4>
+                        <div className="h-64 w-full">
+                          <Pie
+                            data={{
+                              labels: ['Completed', 'Scheduled', 'Cancelled'],
+                              datasets: [
+                                {
+                                  data: [
+                                    appointmentStats.byStatus?.completed || 0,
+                                    appointmentStats.byStatus?.scheduled || 0,
+                                    appointmentStats.byStatus?.cancelled || 0
+                                  ],
+                                  backgroundColor: [
+                                    'rgb(34, 197, 94)',
+                                    'rgb(59, 130, 246)',
+                                    'rgb(239, 68, 68)'
+                                  ]
+                                }
+                              ]
+                            }}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: false
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Key Metrics */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <h5 className="font-medium text-gray-800 mb-2">Total Patients</h5>
+                        <div className="flex items-center justify-between">
+                          <p className="text-2xl font-bold text-blue-600">{analyticsData.patients.data.reduce((a, b) => a + b, 0)}</p>
+                          <span className="text-green-500 flex items-center">
+                            <FaArrowUp className="mr-1" /> 
+                            {((analyticsData.patients.data[analyticsData.patients.data.length - 1] / 
+                              analyticsData.patients.data[analyticsData.patients.data.length - 2] - 1) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <h5 className="font-medium text-gray-800 mb-2">Average Revenue</h5>
+                        <div className="flex items-center justify-between">
+                          <p className="text-2xl font-bold text-blue-600">
+                            ₹{(analyticsData.revenue.data.reduce((a, b) => a + b, 0) / analyticsData.revenue.data.length || 0).toFixed(0)}
+                          </p>
+                          <span className="text-green-500 flex items-center">
+                            <FaArrowUp className="mr-1" /> 
+                            {((analyticsData.revenue.data[analyticsData.revenue.data.length - 1] / 
+                              analyticsData.revenue.data[analyticsData.revenue.data.length - 2] - 1) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                              </div>
+                            </div>
               </div>
             </div>
           </Tab.Panel>
@@ -4132,7 +5136,15 @@ function AdminDashboard() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-4 bg-[var(--accent)] rounded-lg">
                     <span>Email Notifications</span>
-                    <input type="checkbox" checked className="form-checkbox" />
+                    <input 
+                      type="checkbox" 
+                      checked={notificationSettings.emailNotifications}
+                      onChange={(e) => setNotificationSettings(prev => ({
+                        ...prev,
+                        emailNotifications: e.target.checked
+                      }))}
+                      className="form-checkbox" 
+                    />
                   </div>
                   <div className="flex items-center justify-between p-4 bg-[var(--accent)] rounded-lg">
                     <span>SMS Alerts</span>

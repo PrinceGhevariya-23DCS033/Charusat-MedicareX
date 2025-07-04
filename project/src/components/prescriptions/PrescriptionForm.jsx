@@ -17,6 +17,7 @@ const PrescriptionForm = ({ appointment, onSubmit }) => {
   const [filteredPatients, setFilteredPatients] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     // Fetch patients when component mounts
@@ -28,17 +29,17 @@ const PrescriptionForm = ({ appointment, onSubmit }) => {
           return;
         }
 
-        const response = await axios.get('http://localhost:3000/api/users', {
+        // Fetch patients using the doctor-specific endpoint
+        const response = await axios.get('http://localhost:3000/api/users/doctor/patients', {
           headers: {
-            'Authorization': `Bearer ${token}`
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
           }
         });
-
+        
         if (response.data) {
-          const patientList = response.data.filter(user => user.role === 'patient');
-          setPatients(patientList);
-        } else {
-          toast.error('No patient data received');
+          setPatients(response.data);
+          setError(null);
         }
       } catch (error) {
         console.error('Error fetching patients:', error);

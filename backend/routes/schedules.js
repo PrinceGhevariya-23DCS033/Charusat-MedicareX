@@ -134,7 +134,7 @@ router.patch('/doctor/:doctorId', auth, async (req, res) => {
         return res.status(400).json({ error: 'Schedule must include all days of the week' });
       }
 
-      // Validate time format for working days
+      // Validate time format and working hours for working days
       for (const day of workingDays) {
         if (day.isWorking) {
           if (!day.startTime || !day.endTime) {
@@ -143,6 +143,20 @@ router.patch('/doctor/:doctorId', auth, async (req, res) => {
           if (!/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(day.startTime) || 
               !/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(day.endTime)) {
             return res.status(400).json({ error: 'Invalid time format. Use HH:MM' });
+          }
+
+          // Validate working hours are between 9 AM and 8 PM
+          const startTime = new Date(`2000-01-01T${day.startTime}`);
+          const endTime = new Date(`2000-01-01T${day.endTime}`);
+          const minTime = new Date('2000-01-01T09:00');
+          const maxTime = new Date('2000-01-01T20:00');
+
+          if (startTime < minTime || endTime > maxTime) {
+            return res.status(400).json({ error: 'Working hours must be between 9:00 AM and 8:00 PM' });
+          }
+
+          if (startTime >= endTime) {
+            return res.status(400).json({ error: 'End time must be after start time' });
           }
         }
       }

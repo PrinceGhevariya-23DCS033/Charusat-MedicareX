@@ -3,7 +3,7 @@ import axios from 'axios';
 import { format } from 'date-fns';
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
-import { FaCalendar, FaEnvelope, FaFlask, FaHistory, FaPhone, FaPrescription, FaUserInjured } from 'react-icons/fa';
+import { FaCalendar, FaEnvelope, FaFile, FaFlask, FaHistory, FaPhone, FaPrescription, FaPrint, FaUser, FaUserInjured } from 'react-icons/fa';
 import PrescriptionForm from '../prescriptions/PrescriptionForm';
 
 function DoctorDashboard() {
@@ -27,21 +27,24 @@ function DoctorDashboard() {
 
   const [schedule, setSchedule] = useState({
     workingDays: [
-      { day: 'monday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-      { day: 'tuesday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-      { day: 'wednesday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-      { day: 'thursday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-      { day: 'friday', isWorking: true, startTime: '09:00', endTime: '17:00' },
+      { day: 'monday', isWorking: true, startTime: '09:00', endTime: '20:00' },
+      { day: 'tuesday', isWorking: true, startTime: '09:00', endTime: '20:00' },
+      { day: 'wednesday', isWorking: true, startTime: '09:00', endTime: '20:00' },
+      { day: 'thursday', isWorking: true, startTime: '09:00', endTime: '20:00' },
+      { day: 'friday', isWorking: true, startTime: '09:00', endTime: '20:00' },
       { day: 'saturday', isWorking: false },
       { day: 'sunday', isWorking: false }
     ],
-    appointmentDuration: 15,
+    appointmentDuration: 30, // in minutes
+    breakTime: 60, // in minutes
+    breakStartTime: '13:00', // lunch break start time
     maxAppointmentsPerDay: 20
   });
 
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [selectedPrescription, setSelectedPrescription] = useState(null);
   const [showPrescriptionForm, setShowPrescriptionForm] = useState(false);
+  const [showPrescriptionDetails, setShowPrescriptionDetails] = useState(false);
 
   const [showLabTestForm, setShowLabTestForm] = useState(false);
   const [selectedLabTest, setSelectedLabTest] = useState(null);
@@ -59,9 +62,39 @@ function DoctorDashboard() {
   const [showPatientHistory, setShowPatientHistory] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Get user token and doctor ID from localStorage
+  const [patientDetails, setPatientDetails] = useState({});
+  const [loadingPatient, setLoadingPatient] = useState(false);
+
+  const [showLabTestResultsForm, setShowLabTestResultsForm] = useState(false);
+  const [labTestResultsForm, setLabTestResultsForm] = useState({
+    results: '',
+    reportFile: null
+  });
+
+  const [diagnosis, setDiagnosis] = useState('');
+
   const token = localStorage.getItem('token');
-  const doctorId = localStorage.getItem('userId');
+  const doctorId = token ? JSON.parse(atob(token.split('.')[1])).id : null;
+
+  // Add this function to handle token validation
+  const validateToken = () => {
+    if (!token) {
+      setError('Please log in to continue');
+      return false;
+    }
+    try {
+      const decoded = JSON.parse(atob(token.split('.')[1]));
+      if (!decoded.id || decoded.role !== 'doctor') {
+        setError('Invalid user session');
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Error decoding token:', error);
+      setError('Invalid session. Please log in again');
+      return false;
+    }
+  };
 
   // Filter patients based on search query
   const filteredPatients = patients.filter(patient => {
@@ -73,39 +106,17 @@ function DoctorDashboard() {
     );
   });
 
+  // Update the useEffect for fetching appointments
   useEffect(() => {
     const fetchAppointments = async () => {
+      if (!validateToken()) return;
+
       setLoading(true);
       try {
-        // Get doctor ID from token if not in localStorage
-        let currentDoctorId = doctorId;
-        if (!currentDoctorId && token) {
-          try {
-            // Decode the token to get the doctor's ID
-            const tokenData = JSON.parse(atob(token.split('.')[1]));
-            currentDoctorId = tokenData.id;
-            // Store the doctor ID in localStorage
-            localStorage.setItem('userId', currentDoctorId);
-          } catch (error) {
-            console.error('Error decoding token:', error);
-            setError('Error getting doctor information');
-            return;
-          }
-        }
-
-        if (!currentDoctorId) {
-          setError('Doctor ID not found');
-          return;
-        }
-
-        console.log('Fetching appointments for doctor:', currentDoctorId);
-
         // Fetch appointments where the doctor is assigned
-        const response = await axios.get(`http://localhost:3000/api/appointments/user/${currentDoctorId}`, {
+        const response = await axios.get(`http://localhost:3000/api/appointments/doctor/${doctorId}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-
-        console.log('Fetched appointments:', response.data);
 
         if (response.data && Array.isArray(response.data)) {
           // Sort appointments by date and time
@@ -118,85 +129,82 @@ function DoctorDashboard() {
             return dateA - dateB;
           });
 
-          // Add creator information to each appointment
-          const appointmentsWithCreator = await Promise.all(
-            sortedAppointments.map(async (apt) => {
-              try {
-                // Only fetch creator details if createdBy exists and is a valid ID
-                if (apt.createdBy && typeof apt.createdBy === 'string' && apt.createdBy.length > 0) {
-                  try {
-                    const creatorResponse = await axios.get(
-                      `http://localhost:3000/api/users/${apt.createdBy}`,
-                      { headers: { Authorization: `Bearer ${token}` } }
-                    );
-                    return {
-                      ...apt,
-                      creator: {
-                        name: creatorResponse.data.name,
-                        role: creatorResponse.data.role
-                      }
-                    };
-                  } catch (error) {
-                    console.warn('Could not fetch creator details:', error.message);
-                    // Return appointment with default creator info on error
-                    return {
-                      ...apt,
-                      creator: {
-                        name: 'Unknown',
-                        role: 'unknown'
-                      }
-                    };
-                  }
-                }
-                // If no creator, return appointment with default creator info
-                return {
-                  ...apt,
-                  creator: {
-                    name: 'System',
-                    role: 'system'
-                  }
-                };
-              } catch (error) {
-                console.warn('Error processing appointment creator:', error.message);
-                // Return appointment with default creator info on error
-                return {
-                  ...apt,
-                  creator: {
-                    name: 'Unknown',
-                    role: 'unknown'
-                  }
-                };
-              }
-            })
-          );
-
-          setAppointments(appointmentsWithCreator);
+          setAppointments(sortedAppointments);
 
           // Extract unique patients from appointments
-          const uniquePatients = appointmentsWithCreator.reduce((acc, apt) => {
+          const uniquePatients = sortedAppointments.reduce((acc, apt) => {
             if (apt.patient && !acc.find(p => p._id === apt.patient._id)) {
               acc.push(apt.patient);
             }
             return acc;
           }, []);
           setPatients(uniquePatients);
-        } else {
-          console.error('Invalid response format:', response.data);
-          setError('Invalid response format from server');
         }
       } catch (error) {
         console.error('Error fetching appointments:', error);
-        setError('Error fetching appointments');
+        if (error.response?.status === 403) {
+          setError('You do not have permission to view appointments');
+        } else if (error.response?.status === 401) {
+          setError('Please log in again to view appointments');
+        } else {
+          setError(error.response?.data?.error || 'Error fetching appointments');
+        }
       } finally {
         setLoading(false);
       }
     };
 
-    if (token) {
-      fetchAppointments();
-    } else {
-      setError('Please log in to view appointments');
-    }
+    fetchAppointments();
+  }, [token, doctorId]);
+
+  // Update the useEffect for fetching schedule
+  useEffect(() => {
+    const fetchSchedule = async () => {
+      if (!validateToken()) return;
+
+      setScheduleLoading(true);
+      try {
+        const response = await axios.get(`http://localhost:3000/api/schedules/doctor/${doctorId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (response.data) {
+          setSchedule(response.data);
+        }
+      } catch (error) {
+        console.error('Error fetching schedule:', error);
+        if (error.response?.status === 403) {
+          setError('You do not have permission to view schedule');
+        } else if (error.response?.status === 401) {
+          setError('Please log in again to view schedule');
+        } else {
+          setError(error.response?.data?.error || 'Error fetching schedule');
+        }
+      } finally {
+        setScheduleLoading(false);
+      }
+    };
+
+    fetchSchedule();
+  }, [token, doctorId]);
+
+  useEffect(() => {
+    const fetchPrescriptions = async () => {
+      if (!token || !doctorId) return;
+
+      try {
+        const response = await axios.get(`http://localhost:3000/api/prescriptions/doctor/${doctorId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (response.data) {
+          setPrescriptions(response.data);
+        }
+      } catch (error) {
+        console.error('Error fetching prescriptions:', error);
+      }
+    };
+
+    fetchPrescriptions();
   }, [token, doctorId]);
 
   useEffect(() => {
@@ -212,88 +220,6 @@ function DoctorDashboard() {
 
     testRoute();
   }, []);
-
-  useEffect(() => {
-    const fetchSchedule = async () => {
-      if (!token || !doctorId) {
-        console.log('Missing token or doctorId:', { token: !!token, doctorId });
-        return;
-      }
-      
-      setScheduleLoading(true);
-      try {
-        // Ensure doctorId is a valid MongoDB ObjectId
-        if (!doctorId.match(/^[0-9a-fA-F]{24}$/)) {
-          console.error('Invalid doctor ID format:', doctorId);
-          setError('Invalid doctor ID');
-          return;
-        }
-
-        console.log('Fetching schedule for doctor:', doctorId);
-        const response = await axios.get(
-          `http://localhost:3000/api/schedules/doctor/${doctorId}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        console.log('Schedule response:', response.data);
-        if (response.data) {
-          setSchedule(response.data);
-        }
-      } catch (error) {
-        console.error('Error fetching schedule:', error);
-        console.error('Error details:', {
-          status: error.response?.status,
-          data: error.response?.data,
-          doctorId,
-          token: token ? 'Present' : 'Missing'
-        });
-        if (error.response?.status === 404) {
-          // If schedule not found, use default schedule
-          console.log('Creating default schedule');
-          setSchedule({
-            workingDays: [
-              { day: 'monday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-              { day: 'tuesday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-              { day: 'wednesday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-              { day: 'thursday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-              { day: 'friday', isWorking: true, startTime: '09:00', endTime: '17:00' },
-              { day: 'saturday', isWorking: false },
-              { day: 'sunday', isWorking: false }
-            ],
-            appointmentDuration: 15,
-            maxAppointmentsPerDay: 20
-          });
-        } else {
-          setError(error.response?.data?.error || 'Error loading schedule. Please try again later.');
-        }
-      } finally {
-        setScheduleLoading(false);
-      }
-    };
-
-    fetchSchedule();
-  }, [token, doctorId]);
-
-  useEffect(() => {
-    const fetchPrescriptions = async () => {
-      try {
-        const response = await fetch(`http://localhost:3000/api/prescriptions/doctor/${doctorId}`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setPrescriptions(data);
-        }
-      } catch (error) {
-        console.error('Error fetching prescriptions:', error);
-      }
-    };
-
-    if (doctorId) {
-      fetchPrescriptions();
-    }
-  }, [doctorId]);
 
   useEffect(() => {
     const fetchLabTests = async () => {
@@ -316,47 +242,31 @@ function DoctorDashboard() {
   useEffect(() => {
     const fetchPatients = async () => {
       try {
-        // Get doctor ID from token if not in localStorage
-        let currentDoctorId = doctorId;
-        if (!currentDoctorId && token) {
-          try {
-            const tokenData = JSON.parse(atob(token.split('.')[1]));
-            currentDoctorId = tokenData.id;
-          } catch (error) {
-            console.error('Error decoding token:', error);
-            setError('Error getting doctor information');
-            return;
+        console.log('Fetching patients for doctor...');
+        const response = await axios.get('http://localhost:3000/api/users/doctor/patients', {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
           }
-        }
-
-        if (!currentDoctorId) {
-          setError('Doctor ID not found');
-          return;
-        }
-
-        // Fetch appointments to get associated patients
-        const appointmentsResponse = await axios.get(`http://localhost:3000/api/appointments/user/${currentDoctorId}`, {
-          headers: { Authorization: `Bearer ${token}` }
         });
 
-        // Extract unique patients from appointments
-        const uniquePatients = appointmentsResponse.data.reduce((acc, apt) => {
-          if (apt.patient && !acc.find(p => p._id === apt.patient._id)) {
-            acc.push(apt.patient);
-          }
-          return acc;
-        }, []);
-        setPatients(uniquePatients);
+        console.log('Patients response:', response.data);
+        if (Array.isArray(response.data)) {
+          setPatients(response.data);
+        } else {
+          console.error('Invalid patients data format:', response.data);
+          setError('Invalid data format received from server');
+        }
       } catch (error) {
         console.error('Error fetching patients:', error);
-        setError('Error fetching patients');
+        setError(error.response?.data?.error || 'Error fetching patients');
       }
     };
 
     if (token) {
       fetchPatients();
     }
-  }, [token, doctorId]);
+  }, [token]);
 
   const handleUpdateAppointmentStatus = async (appointmentId, newStatus) => {
     try {
@@ -454,180 +364,13 @@ function DoctorDashboard() {
     }
   };
 
-  const handleStartConsultation = async (appointmentId) => {
-    try {
-      // Validate appointment ID
-      if (!appointmentId || typeof appointmentId !== 'string' || appointmentId.length < 24) {
-        console.error('Invalid appointment ID:', appointmentId);
-        setError('Invalid appointment ID');
-        return;
-      }
-
-      // Validate appointment exists
-      const appointment = appointments.find(apt => apt._id === appointmentId);
-      if (!appointment) {
-        console.error('Appointment not found in local state:', appointmentId);
-        setError('Appointment not found');
-        return;
-      }
-
-      // Validate appointment status
-      if (appointment.status !== 'scheduled') {
-        console.error('Invalid appointment status:', {
-          appointmentId,
-          currentStatus: appointment.status
-        });
-        setError('Only scheduled appointments can be started');
-        return;
-      }
-
-      // Validate doctor is assigned to this appointment
-      if (appointment.doctor._id !== doctorId) {
-        console.error('Doctor not assigned to this appointment:', {
-          appointmentId,
-          assignedDoctorId: appointment.doctor._id,
-          currentDoctorId: doctorId
-        });
-        setError('You are not assigned to this appointment');
-        return;
-      }
-
-      console.log('Starting consultation:', {
-        appointmentId,
-        currentStatus: appointment.status,
-        doctorId: doctorId,
-        token: token ? 'Present' : 'Missing',
-        appointmentDoctorId: appointment.doctor._id
-      });
-
-      const response = await axios.patch(
-        `http://localhost:3000/api/appointments/${appointmentId}/status`,
-        { status: 'in-progress' },
-        { 
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          } 
-        }
-      );
-
-      if (response.data) {
-        setAppointments(appointments.map(apt => 
-          apt._id === appointmentId ? { ...apt, status: 'in-progress' } : apt
-        ));
-        setSuccess('Consultation started');
-        handleViewAppointmentDetails(response.data);
-      } else {
-        console.error('No response data received');
-        setError('Failed to start consultation: No response data');
-      }
-    } catch (error) {
-      console.error('Error starting consultation:', {
-        error: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        appointmentId,
-        doctorId: doctorId
-      });
-      
-      if (error.response?.status === 404) {
-        setError('Appointment not found');
-      } else if (error.response?.status === 400) {
-        setError(error.response.data.error || 'Invalid request');
-      } else if (error.response?.status === 401) {
-        setError('Please log in again to continue');
-        // Optionally redirect to login
-      } else if (error.response?.status === 403) {
-        setError('You do not have permission to start this consultation');
-      } else {
-        setError(error.response?.data?.details || error.message || 'Error starting consultation');
-      }
-    }
-  };
-
-  const handleCompleteConsultation = async (appointmentId) => {
-    try {
-      if (!appointmentForm.diagnosis || !appointmentForm.prescription) {
-        setError('Please provide diagnosis and prescription before completing consultation');
-        return;
-      }
-
-      const response = await axios.patch(
-        `http://localhost:3000/api/appointments/${appointmentId}`,
-        { ...appointmentForm, status: 'completed' },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (response.data) {
-        setAppointments(appointments.map(apt => 
-          apt._id === appointmentId 
-            ? { ...apt, ...appointmentForm, status: 'completed' } 
-            : apt
-        ));
-        setSuccess('Consultation completed successfully');
-        setShowAppointmentDetails(false);
-        setAppointmentForm({ diagnosis: '', prescription: '', notes: '' });
-      } else {
-        setError('Failed to complete consultation');
-      }
-    } catch (error) {
-      setError('Error completing consultation');
-      console.error('Error:', error);
-    }
-  };
-
-  const filteredAppointments = appointments.filter(apt => {
-    if (!apt.date) return false;
-    
-    const appointmentDate = new Date(apt.date).toISOString().split('T')[0];
-    const isDateMatch = appointmentDate === selectedDate;
-    const isCompleted = apt.status === 'completed';
-    
-    if (activeTab === 'upcoming') {
-      return isDateMatch && !isCompleted;
-    } else {
-      return isCompleted;
-    }
-  });
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'scheduled':
-        return 'bg-blue-100 text-blue-800';
-      case 'in-progress':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'completed':
-        return 'bg-green-100 text-green-800';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const formatTime = (time) => {
-    return new Date(`2000-01-01T${time}`).toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-  };
-
-  const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
   const handleViewAppointmentDetails = (appointment) => {
     setSelectedAppointment(appointment);
-    setAppointmentForm({
-      diagnosis: appointment.diagnosis || '',
-      prescription: appointment.prescription || '',
-      notes: appointment.notes || ''
-    });
+    setDiagnosis(appointment.diagnosis || '');
     setShowAppointmentDetails(true);
+    if (appointment.patient?._id) {
+      fetchPatientDetails(appointment.patient._id);
+    }
   };
 
   const handleCloseAppointmentDetails = () => {
@@ -657,28 +400,115 @@ function DoctorDashboard() {
   });
 
   const handlePrint = async () => {
-    const response = await fetch('http://localhost:8000/generate-word', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData),
-    });
-    if (response.ok) {
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'filled-form.docx';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+    try {
+      if (!selectedPrescription) {
+        toast.error('No prescription selected');
+        return;
+      }
+
+      // Create a new window for printing
+      const printWindow = window.open('', '_blank');
+      
+      // Create the HTML content for printing
+      const printContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Prescription</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                padding: 20px;
+                max-width: 800px;
+                margin: 0 auto;
+              }
+              .header {
+                text-align: center;
+                margin-bottom: 30px;
+              }
+              .prescription-details {
+                margin-bottom: 30px;
+              }
+              .medications {
+                margin-bottom: 30px;
+              }
+              .medication-item {
+                margin-bottom: 15px;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+              }
+              .footer {
+                margin-top: 50px;
+                text-align: center;
+              }
+              .signature {
+                margin-top: 100px;
+                text-align: right;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Medical Prescription</h1>
+              <p>Date: ${format(new Date(selectedPrescription.date), 'MMMM d, yyyy')}</p>
+            </div>
+            
+            <div class="prescription-details">
+              <h2>Patient Information</h2>
+              <p><strong>Name:</strong> ${selectedPrescription.patient.name}</p>
+              <p><strong>Diagnosis:</strong> ${selectedPrescription.diagnosis}</p>
+            </div>
+            
+            <div class="medications">
+              <h2>Medications</h2>
+              ${selectedPrescription.medications.map(med => `
+                <div class="medication-item">
+                  <p><strong>${med.name}</strong></p>
+                  <p>Dosage: ${med.dosage}</p>
+                  <p>Frequency: ${med.frequency}</p>
+                  <p>Duration: ${med.duration}</p>
+                  ${med.instructions ? `<p>Instructions: ${med.instructions}</p>` : ''}
+                </div>
+              `).join('')}
+            </div>
+            
+            ${selectedPrescription.notes ? `
+              <div class="notes">
+                <h2>Additional Notes</h2>
+                <p>${selectedPrescription.notes}</p>
+              </div>
+            ` : ''}
+            
+            <div class="signature">
+              <p>Doctor's Signature: _________________</p>
+              <p>Date: ${format(new Date(), 'MMMM d, yyyy')}</p>
+            </div>
+            
+            <div class="footer">
+              <p>This is a computer-generated prescription. Please consult your doctor for any questions.</p>
+            </div>
+          </body>
+        </html>
+      `;
+
+      // Write the content to the new window
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+
+      // Wait for images to load before printing
+      printWindow.onload = function() {
+        printWindow.print();
+        printWindow.close();
+      };
+    } catch (error) {
+      console.error('Error printing prescription:', error);
+      toast.error('Failed to print prescription');
     }
   };
 
   const handleScheduleUpdate = async () => {
     try {
-      console.log('Updating schedule for doctor:', doctorId);
-      console.log('Schedule data:', schedule);
-      
       const response = await axios.patch(
         `http://localhost:3000/api/schedules/doctor/${doctorId}`,
         schedule,
@@ -688,7 +518,6 @@ function DoctorDashboard() {
       setSuccess('Schedule updated successfully');
     } catch (error) {
       console.error('Error updating schedule:', error);
-      console.error('Error response:', error.response?.data);
       setError(error.response?.data?.error || 'Error updating schedule');
     }
   };
@@ -797,20 +626,49 @@ function DoctorDashboard() {
     }
   };
 
-  const handleUpdateLabTestResults = async (testId, results, reportFile) => {
+  const handleUpdateLabTestResults = async (testId) => {
     try {
+      if (!testId) {
+        toast.error('Invalid test ID');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('results', labTestResultsForm.results);
+      
+      if (labTestResultsForm.reportFile) {
+        formData.append('reportFile', labTestResultsForm.reportFile);
+      }
+
+      console.log('Updating lab test results:', {
+        testId,
+        hasResults: !!labTestResultsForm.results,
+        hasFile: !!labTestResultsForm.reportFile
+      });
+
       const response = await axios.patch(
         `http://localhost:3000/api/lab-tests/${testId}/results`,
-        { results, reportFile },
-        { headers: { Authorization: `Bearer ${token}` } }
+        formData,
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          } 
+        }
       );
+
+      if (response.data) {
       setLabTests(labTests.map(test => 
         test._id === testId ? response.data : test
       ));
+        setShowLabTestResultsForm(false);
+        setLabTestResultsForm({ results: '', reportFile: null });
       toast.success('Lab test results updated successfully');
+      }
     } catch (error) {
       console.error('Error updating lab test results:', error);
-      toast.error('Failed to update lab test results');
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Failed to update lab test results';
+      toast.error(errorMessage);
     }
   };
 
@@ -826,9 +684,9 @@ function DoctorDashboard() {
         return;
       }
 
-      // Fetch patient's appointments where the current doctor is assigned
-      const appointmentsResponse = await axios.get(
-        `http://localhost:3000/api/appointments/doctor/${doctorId}`, 
+      // Fetch patient details and history
+      const response = await axios.get(
+        `http://localhost:3000/api/users/doctor/patient/${patientId}`, 
         { 
           headers: { 
             Authorization: `Bearer ${token}`,
@@ -837,46 +695,14 @@ function DoctorDashboard() {
         }
       );
 
-      // Filter appointments for this specific patient
-      const patientAppointments = appointmentsResponse.data.filter(apt => 
-        apt.patient._id === patientId
-      );
-
-      // Fetch prescriptions where the current doctor is assigned
-      const prescriptionsResponse = await axios.get(
-        `http://localhost:3000/api/prescriptions/doctor/${doctorId}`, 
-        { 
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          } 
-        }
-      );
-
-      // Filter prescriptions for this specific patient
-      const patientPrescriptions = prescriptionsResponse.data.filter(pres => 
-        pres.patient._id === patientId
-      );
-
-      // Fetch lab tests where the current doctor is assigned
-      const labTestsResponse = await axios.get(
-        `http://localhost:3000/api/lab-tests/doctor/${doctorId}`, 
-        { 
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          } 
-        }
-      );
-
-      // Filter lab tests for this specific patient
-      const patientLabTests = labTestsResponse.data.filter(test => 
-        test.patient._id === patientId
-      );
+      const { recentAppointments, recentPrescriptions, ...patientData } = response.data;
+      
+      // Set patient data
+      setSelectedPatient(patientData);
 
       // Combine all history with proper error handling
       const history = [
-        ...(patientAppointments || []).map(apt => ({
+        ...(recentAppointments || []).map(apt => ({
           type: 'appointment',
           date: apt.date,
           title: `Appointment`,
@@ -887,23 +713,13 @@ function DoctorDashboard() {
             diagnosis: apt.diagnosis
           }
         })),
-        ...(patientPrescriptions || []).map(pres => ({
+        ...(recentPrescriptions || []).map(pres => ({
           type: 'prescription',
           date: pres.date,
           title: `Prescription`,
           details: {
             diagnosis: pres.diagnosis,
             medications: pres.medications || []
-          }
-        })),
-        ...(patientLabTests || []).map(test => ({
-          type: 'labTest',
-          date: test.requestedDate,
-          title: `Lab Test: ${test.testType}`,
-          details: {
-            testName: test.testName,
-            status: test.status,
-            results: test.results
           }
         }))
       ];
@@ -918,7 +734,6 @@ function DoctorDashboard() {
         setError('You do not have permission to view this patient\'s history');
       } else if (error.response?.status === 401) {
         setError('Please log in again to view patient history');
-        // Optionally redirect to login
       } else if (error.response?.status === 404) {
         setError('Patient history not found');
       } else {
@@ -926,6 +741,344 @@ function DoctorDashboard() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStartConsultation = async (appointmentId) => {
+    try {
+      // Validate appointment ID
+      if (!appointmentId || typeof appointmentId !== 'string' || appointmentId.length < 24) {
+        console.error('Invalid appointment ID:', appointmentId);
+        setError('Invalid appointment ID');
+        return;
+      }
+
+      // Validate appointment exists
+      const appointment = appointments.find(apt => apt._id === appointmentId);
+      if (!appointment) {
+        console.error('Appointment not found in local state:', appointmentId);
+        setError('Appointment not found');
+        return;
+      }
+
+      // Validate appointment status
+      if (appointment.status !== 'scheduled') {
+        console.error('Invalid appointment status:', {
+          appointmentId,
+          currentStatus: appointment.status
+        });
+        setError('Only scheduled appointments can be started');
+        return;
+      }
+
+      // Validate doctor is assigned to this appointment
+      if (appointment.doctor._id !== doctorId) {
+        console.error('Doctor not assigned to this appointment:', {
+          appointmentId,
+          assignedDoctorId: appointment.doctor._id,
+          currentDoctorId: doctorId
+        });
+        setError('You are not assigned to this appointment');
+        return;
+      }
+
+      console.log('Starting consultation:', {
+        appointmentId,
+        currentStatus: appointment.status,
+        doctorId: doctorId,
+        token: token ? 'Present' : 'Missing',
+        appointmentDoctorId: appointment.doctor._id
+      });
+
+      const response = await axios.patch(
+        `http://localhost:3000/api/appointments/${appointmentId}/status`,
+        { status: 'in-progress' },
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          } 
+        }
+      );
+
+      if (response.data) {
+        setAppointments(appointments.map(apt => 
+          apt._id === appointmentId ? { ...apt, status: 'in-progress' } : apt
+        ));
+        setSuccess('Consultation started');
+        // Show the consultation form
+        setSelectedAppointment(response.data);
+        setAppointmentForm({
+          diagnosis: '',
+          prescription: '',
+          notes: ''
+        });
+        setShowAppointmentDetails(true);
+      } else {
+        console.error('No response data received');
+        setError('Failed to start consultation: No response data');
+      }
+    } catch (error) {
+      console.error('Error starting consultation:', {
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        appointmentId,
+        doctorId: doctorId
+      });
+      
+      if (error.response?.status === 404) {
+        setError('Appointment not found');
+      } else if (error.response?.status === 400) {
+        setError(error.response.data.error || 'Invalid request');
+      } else if (error.response?.status === 401) {
+        setError('Please log in again to continue');
+      } else if (error.response?.status === 403) {
+        setError('You do not have permission to start this consultation');
+      } else {
+        setError(error.response?.data?.details || error.message || 'Error starting consultation');
+      }
+    }
+  };
+
+  const handleCompleteConsultation = async (appointmentId) => {
+    try {
+      // Validate appointment exists and status transition is valid
+      const appointment = appointments.find(apt => apt._id === appointmentId);
+      if (!appointment) {
+        setError('Appointment not found');
+        return;
+      }
+
+      const validTransitions = {
+        'pending': ['completed', 'cancelled', 'in-progress'],
+        'scheduled': ['in-progress', 'cancelled'],
+        'in-progress': ['completed', 'cancelled'],
+        'completed': ['cancelled']
+      };
+
+      if (!validTransitions[appointment.status]?.includes('completed')) {
+        setError(`Cannot complete consultation from status ${appointment.status}`);
+        return;
+      }
+
+      // First update the diagnosis
+      const diagnosisResponse = await fetch(`http://localhost:3000/api/appointments/${appointmentId}/diagnosis`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ diagnosis })
+      });
+
+      if (!diagnosisResponse.ok) {
+        throw new Error('Failed to update diagnosis');
+      }
+
+      // Then update the appointment status
+      console.log('Updating appointment status to completed for appointment:', appointmentId);
+      const response = await axios.put(
+        `http://localhost:3000/api/appointments/${appointmentId}/status`,
+        { status: 'completed' },
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+      );
+
+      if (response.data) {
+        // Update the appointments array with the completed appointment
+        const updatedAppointment = { ...appointment, status: 'completed', diagnosis };
+        setAppointments(prevAppointments => 
+          prevAppointments.map(apt => 
+            apt._id === appointmentId ? updatedAppointment : apt
+          )
+        );
+        
+        // Close the appointment details modal
+        setShowAppointmentDetails(false);
+        setSelectedAppointment(null);
+        setDiagnosis('');
+        setSuccess('Consultation completed successfully');
+        
+        // Force a re-render of the filtered appointments
+        setActiveTab('completed');
+      } else {
+        throw new Error('Failed to update appointment status: No response data');
+      }
+    } catch (error) {
+      console.error('Error completing consultation:', error);
+      if (error.response?.status === 404) {
+        setError('Appointment not found');
+      } else if (error.response?.status === 400) {
+        setError(error.response.data.error || 'Invalid request');
+      } else if (error.response?.status === 401) {
+        setError('Please log in again to continue');
+      } else if (error.response?.status === 403) {
+        setError('You do not have permission to complete this consultation');
+      } else {
+        setError(error.response?.data?.details || error.message || 'Failed to complete consultation. Please try again.');
+      }
+    }
+  };
+
+  const filteredAppointments = appointments.filter(apt => {
+    if (!apt.date) return false;
+    
+    const appointmentDate = new Date(apt.date).toISOString().split('T')[0];
+    const isDateMatch = appointmentDate === selectedDate;
+    const isCompleted = apt.status === 'completed';
+    
+    if (activeTab === 'upcoming') {
+      // For upcoming tab, show only non-completed appointments for the selected date
+      return isDateMatch && !isCompleted;
+    } else if (activeTab === 'completed') {
+      // For completed tab, show all completed appointments regardless of date
+      return isCompleted;
+    }
+    return false;
+  });
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'scheduled':
+        return 'bg-blue-100 text-blue-800';
+      case 'in-progress':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'completed':
+        return 'bg-green-100 text-green-800';
+      case 'cancelled':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const formatTime = (time) => {
+    return new Date(`2000-01-01T${time}`).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
+  const formatDate = (date) => {
+    return new Date(date).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
+  // Update the fetchPatientDetails function
+  const fetchPatientDetails = async (patientId) => {
+    if (!validateToken() || !patientId) return;
+
+    setLoadingPatient(true);
+    try {
+      console.log('Fetching patient details for ID:', patientId);
+      const response = await axios.get(`http://localhost:3000/api/users/doctor/patient/${patientId}`, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.data) {
+        console.log('Received patient data:', response.data);
+        setPatientDetails(prev => ({
+          ...prev,
+          [patientId]: response.data
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching patient details:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to fetch patient details';
+      toast.error(errorMessage);
+      setError(errorMessage);
+    } finally {
+      setLoadingPatient(false);
+    }
+  };
+
+  // Update the renderPatientInformation function
+  const renderPatientInformation = (patient) => {
+    if (!patient) return null;
+
+    const details = patientDetails[patient._id] || patient;
+    
+    return (
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <h3 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <FaUser className="mr-2 text-indigo-600" />
+              Patient Information
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-medium text-gray-500">Name</p>
+                <p className="text-base text-gray-900">{details.name || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Email</p>
+                <p className="text-base text-gray-900">{details.email || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Phone</p>
+                <p className="text-base text-gray-900">{details.phone || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Age</p>
+                <p className="text-base text-gray-900">{details.age || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Blood Group</p>
+                <p className="text-base text-gray-900">{details.bloodGroup || 'N/A'}</p>
+              </div>
+              {details.studentId && (
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Student ID</p>
+                  <p className="text-base text-gray-900">{details.studentId}</p>
+                </div>
+              )}
+              {details.allergies && (
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-gray-500">Allergies</p>
+                  <p className="text-base text-gray-900">{details.allergies}</p>
+                </div>
+              )}
+              {details.medicalHistory && (
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-gray-500">Medical History</p>
+                  <p className="text-base text-gray-900">{details.medicalHistory}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handleUpdateDiagnosis = async () => {
+    try {
+      const response = await fetch(`http://localhost:3000/api/appointments/${selectedAppointment._id}/diagnosis`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ diagnosis })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update diagnosis');
+      }
+
+      const updatedAppointment = await response.json();
+      setSelectedAppointment(updatedAppointment);
+      // Show success message or handle as needed
+    } catch (error) {
+      console.error('Error updating diagnosis:', error);
+      // Handle error appropriately
     }
   };
 
@@ -974,14 +1127,6 @@ function DoctorDashboard() {
           }>
             <FaFlask className="w-5 h-5" />
             <span className="font-medium">Lab Tests</span>
-          </Tab>
-          <Tab className={({ selected }) =>
-            `flex items-center space-x-2 px-6 py-3 rounded-lg transition-all duration-200 ${
-              selected ? 'bg-[var(--accent)] text-white shadow-md' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-            }`
-          }>
-            <FaEnvelope className="w-5 h-5" />
-            <span className="font-medium">Leave</span>
           </Tab>
         </Tab.List>
 
@@ -1138,75 +1283,89 @@ function DoctorDashboard() {
 
               <div className="bg-white rounded-xl shadow-sm p-6">
                 <h3 className="text-2xl font-semibold text-gray-800 mb-6">Schedule Management</h3>
-                {scheduleLoading ? (
-                  <div className="flex justify-center items-center h-32">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[var(--accent)]"></div>
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Appointment Duration (minutes)</label>
+                    <input
+                      type="number"
+                      min="15"
+                      max="60"
+                      value={schedule.appointmentDuration}
+                      onChange={(e) => setSchedule(prev => ({ ...prev, appointmentDuration: parseInt(e.target.value) }))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                    />
                   </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Appointment Duration (minutes)</label>
-                      <input
-                        type="number"
-                        min="5"
-                        max="60"
-                        value={schedule.appointmentDuration}
-                        onChange={(e) => setSchedule(prev => ({ ...prev, appointmentDuration: parseInt(e.target.value) }))}
-                        className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Max Appointments Per Day</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="50"
-                        value={schedule.maxAppointmentsPerDay}
-                        onChange={(e) => setSchedule(prev => ({ ...prev, maxAppointmentsPerDay: parseInt(e.target.value) }))}
-                        className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
-                      />
-                    </div>
-                    <div className="space-y-4">
-                      <label className="block text-sm font-medium text-gray-700">Working Hours</label>
-                      {schedule.workingDays.map(day => (
-                        <div key={day.day} className="flex items-center space-x-4 p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center space-x-3">
-                            <input
-                              type="checkbox"
-                              checked={day.isWorking}
-                              onChange={(e) => handleWorkingDayChange(day.day, 'isWorking', e.target.checked)}
-                              className="w-5 h-5 text-[var(--accent)] rounded border-gray-300 focus:ring-[var(--accent)]"
-                            />
-                            <span className="capitalize font-medium text-gray-700">{day.day}</span>
-                          </div>
-                          {day.isWorking && (
-                            <>
-                              <input
-                                type="time"
-                                value={day.startTime}
-                                onChange={(e) => handleWorkingDayChange(day.day, 'startTime', e.target.value)}
-                                className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
-                              />
-                              <span className="text-gray-500">to</span>
-                              <input
-                                type="time"
-                                value={day.endTime}
-                                onChange={(e) => handleWorkingDayChange(day.day, 'endTime', e.target.value)}
-                                className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
-                              />
-                            </>
-                          )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Break Duration (minutes)</label>
+                    <input
+                      type="number"
+                      min="30"
+                      max="120"
+                      value={schedule.breakTime}
+                      onChange={(e) => setSchedule(prev => ({ ...prev, breakTime: parseInt(e.target.value) }))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Break Start Time</label>
+                    <input
+                      type="time"
+                      value={schedule.breakStartTime}
+                      onChange={(e) => setSchedule(prev => ({ ...prev, breakStartTime: e.target.value }))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Max Appointments Per Day</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="50"
+                      value={schedule.maxAppointmentsPerDay}
+                      onChange={(e) => setSchedule(prev => ({ ...prev, maxAppointmentsPerDay: parseInt(e.target.value) }))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  <div className="space-y-4">
+                    <label className="block text-sm font-medium text-gray-700">Working Hours</label>
+                    {schedule.workingDays.map(day => (
+                      <div key={day.day} className="flex items-center space-x-4 p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <input
+                            type="checkbox"
+                            checked={day.isWorking}
+                            onChange={(e) => handleWorkingDayChange(day.day, 'isWorking', e.target.checked)}
+                            className="w-5 h-5 text-[var(--accent)] rounded border-gray-300 focus:ring-[var(--accent)]"
+                          />
+                          <span className="capitalize font-medium text-gray-700">{day.day}</span>
                         </div>
-                      ))}
-                    </div>
-                    <button 
-                      onClick={handleScheduleUpdate}
-                      className="w-full px-6 py-3 bg-[var(--accent)] text-white font-medium rounded-lg hover:bg-opacity-90 transition-all duration-200 shadow-sm"
-                    >
-                      Update Schedule
-                    </button>
+                        {day.isWorking && (
+                          <>
+                            <input
+                              type="time"
+                              value={day.startTime}
+                              onChange={(e) => handleWorkingDayChange(day.day, 'startTime', e.target.value)}
+                              className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                            />
+                            <span className="text-gray-500">to</span>
+                            <input
+                              type="time"
+                              value={day.endTime}
+                              onChange={(e) => handleWorkingDayChange(day.day, 'endTime', e.target.value)}
+                              className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                            />
+                          </>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                )}
+                  <button 
+                    onClick={handleScheduleUpdate}
+                    className="w-full px-6 py-3 bg-[var(--accent)] text-white font-medium rounded-lg hover:bg-opacity-90 transition-all duration-200 shadow-sm"
+                  >
+                    Update Schedule
+                  </button>
+                </div>
               </div>
             </div>
           </Tab.Panel>
@@ -1418,7 +1577,11 @@ function DoctorDashboard() {
                     <div
                       key={prescription._id}
                       className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-all duration-200 cursor-pointer border border-gray-100"
-                      onClick={() => setSelectedPrescription(prescription)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedPrescription(prescription);
+                        setShowPrescriptionDetails(true);
+                      }}
                     >
                       <div className="flex justify-between items-start mb-4">
                         <div>
@@ -1614,70 +1777,429 @@ function DoctorDashboard() {
               )}
             </div>
           </Tab.Panel>
+        </Tab.Panels>
+      </Tab.Group>
 
-          {/* Leave Applications Panel */}
-          <Tab.Panel>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h3 className="text-2xl font-semibold text-gray-800 mb-6">Leave Applications</h3>
-                <div className="space-y-4">
-                  {leaveApplications.map(leave => (
-                    <div key={leave.id} className="p-6 bg-gray-50 rounded-xl border border-gray-200">
-                      <div className="flex justify-between items-start mb-4">
+      {showAppointmentDetails && selectedAppointment && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-md bg-white">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-2xl font-bold text-gray-900">Appointment Details</h3>
+              <button
+                onClick={handleCloseAppointmentDetails}
+                className="text-gray-400 hover:text-gray-500"
+              >
+                <span className="sr-only">Close</span>
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {renderPatientInformation(selectedAppointment.patient)}
+
+            <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+              <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <FaCalendar className="mr-2 text-indigo-600" />
+                Appointment Details
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Date</p>
+                  <p className="text-base text-gray-900">{format(new Date(selectedAppointment.date), 'MMMM d, yyyy')}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Time</p>
+                  <p className="text-base text-gray-900">{selectedAppointment.time}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Status</p>
+                  <p className={`text-base font-medium ${getStatusColor(selectedAppointment.status)}`}>
+                    {selectedAppointment.status.charAt(0).toUpperCase() + selectedAppointment.status.slice(1)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Type</p>
+                  <p className="text-base text-gray-900">{selectedAppointment.type}</p>
+                </div>
+                {selectedAppointment.symptoms && (
+                  <div className="col-span-2">
+                    <p className="text-sm font-medium text-gray-500">Symptoms</p>
+                    <p className="text-base text-gray-900">{selectedAppointment.symptoms}</p>
+                  </div>
+                )}
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-gray-500">Diagnosis</p>
+                  <textarea
+                    value={diagnosis}
+                    onChange={(e) => setDiagnosis(e.target.value)}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    rows="4"
+                    placeholder="Enter diagnosis here..."
+                  />
+                </div>
+                {selectedAppointment.notes && (
+                  <div className="col-span-2">
+                    <p className="text-sm font-medium text-gray-500">Notes</p>
+                    <p className="text-base text-gray-900">{selectedAppointment.notes}</p>
+              </div>
+                )}
+                  </div>
+                  </div>
+
+            {/* Existing action buttons */}
+            <div className="flex justify-end space-x-4">
+              <button
+                onClick={handleCloseAppointmentDetails}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => handleCompleteConsultation(selectedAppointment._id)}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700"
+              >
+                End Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPrescriptionDetails && selectedPrescription && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6">
+              <h3 className="text-2xl font-semibold text-gray-800">Prescription Details</h3>
+              <button
+                onClick={() => {
+                  setShowPrescriptionDetails(false);
+                  setSelectedPrescription(null);
+                }}
+                className="text-gray-600 hover:text-gray-800 transition-colors duration-200"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {/* Patient Information Section */}
+              <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                  <FaUser className="mr-2 text-indigo-600" />
+                  Patient Information
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <p className="text-sm font-medium text-gray-500">Name</p>
+                    <p className="text-base text-gray-900">{selectedPrescription.patient.name || 'N/A'}</p>
+                </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Email</p>
+                    <p className="text-base text-gray-900">{selectedPrescription.patient.email || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Phone</p>
+                    <p className="text-base text-gray-900">{selectedPrescription.patient.phone || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Age</p>
+                    <p className="text-base text-gray-900">{selectedPrescription.patient.age || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Blood Group</p>
+                    <p className="text-base text-gray-900">{selectedPrescription.patient.bloodGroup || 'N/A'}</p>
+                  </div>
+                  {selectedPrescription.patient.studentId && (
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Student ID</p>
+                      <p className="text-base text-gray-900">{selectedPrescription.patient.studentId}</p>
+                    </div>
+                  )}
+                  {selectedPrescription.patient.allergies && (
+                    <div className="col-span-2">
+                      <p className="text-sm font-medium text-gray-500">Allergies</p>
+                      <p className="text-base text-gray-900">{selectedPrescription.patient.allergies}</p>
+                    </div>
+                  )}
+                  {selectedPrescription.patient.medicalHistory && (
+                    <div className="col-span-2">
+                      <p className="text-sm font-medium text-gray-500">Medical History</p>
+                      <p className="text-base text-gray-900">{selectedPrescription.patient.medicalHistory}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Prescription Details Section */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Date</p>
+                  <p className="font-medium text-gray-800">{format(new Date(selectedPrescription.date), 'MMMM d, yyyy')}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Status</p>
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    selectedPrescription.status === 'active' ? 'bg-green-100 text-green-800' :
+                    selectedPrescription.status === 'completed' ? 'bg-blue-100 text-blue-800' :
+                    'bg-red-100 text-red-800'
+                  }`}>
+                    {selectedPrescription.status.charAt(0).toUpperCase() + selectedPrescription.status.slice(1)}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Diagnosis</p>
+                  <p className="font-medium text-gray-800">{selectedPrescription.diagnosis}</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-lg font-semibold text-gray-800 mb-3">Medications</h4>
+                <div className="space-y-3">
+                  {selectedPrescription.medications.map((medication, index) => (
+                    <div key={index} className="p-3 bg-gray-50 rounded-lg">
+                      <div className="flex justify-between items-start">
                         <div>
-                          <h4 className="font-semibold text-gray-800">Leave Period</h4>
-                          <p className="text-gray-600">{leave.startDate} to {leave.endDate}</p>
+                          <p className="font-medium text-gray-800">{medication.name}</p>
+                          <p className="text-sm text-gray-600">{medication.dosage}</p>
+                          <p className="text-sm text-gray-600">{medication.duration}</p>
+                          {medication.instructions && (
+                            <p className="text-sm text-gray-600 mt-1">Instructions: {medication.instructions}</p>
+                          )}
                         </div>
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                          leave.status === 'approved' ? 'bg-green-100 text-green-800' :
-                          leave.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-red-100 text-red-800'
-                        }`}>
-                          {leave.status}
-                        </span>
+                        <span className="text-sm text-gray-500">{medication.frequency}</span>
                       </div>
-                      <p className="text-gray-600">{leave.reason}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h3 className="text-2xl font-semibold text-gray-800 mb-6">Apply for Leave</h3>
-                <form className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
-                    <input 
-                      type="date" 
-                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
-                    <input 
-                      type="date" 
-                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Reason</label>
-                    <textarea 
-                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200 h-32 resize-none"
-                      placeholder="Enter reason for leave"
-                    ></textarea>
-                  </div>
-                  <button 
-                    type="submit" 
-                    className="w-full px-6 py-3 bg-[var(--accent)] text-white font-medium rounded-lg hover:bg-opacity-90 transition-all duration-200 shadow-sm"
-                  >
-                    Submit Application
-                  </button>
-                </form>
+              {selectedPrescription.notes && (
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3">Notes</h4>
+                  <p className="text-gray-600">{selectedPrescription.notes}</p>
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-4">
+                <button
+                  onClick={() => {
+                    setShowPrescriptionDetails(false);
+                    setSelectedPrescription(null);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-all duration-200"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handlePrint}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--accent)] rounded-lg hover:bg-opacity-90 transition-all duration-200 flex items-center space-x-2"
+                >
+                  <FaPrint className="w-4 h-4" />
+                  <span>Print Prescription</span>
+                </button>
               </div>
             </div>
-          </Tab.Panel>
-        </Tab.Panels>
-      </Tab.Group>
+          </div>
+        </div>
+      )}
+
+      {selectedLabTest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6">
+              <h3 className="text-2xl font-semibold text-gray-800">Lab Test Details</h3>
+              <button
+                onClick={() => {
+                  setSelectedLabTest(null);
+                  setShowLabTestResultsForm(false);
+                  setLabTestResultsForm({ results: '', reportFile: null });
+                }}
+                className="text-gray-600 hover:text-gray-800 transition-colors duration-200"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Patient Name</p>
+                  <p className="font-medium text-gray-800">{selectedLabTest.patient?.name}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Test Name</p>
+                  <p className="font-medium text-gray-800">{selectedLabTest.testName}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Test Type</p>
+                  <p className="font-medium text-gray-800">{selectedLabTest.testType}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Status</p>
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    selectedLabTest.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                    selectedLabTest.status === 'in-progress' ? 'bg-blue-100 text-blue-800' :
+                    selectedLabTest.status === 'completed' ? 'bg-green-100 text-green-800' :
+                    'bg-red-100 text-red-800'
+                  }`}>
+                    {selectedLabTest.status.charAt(0).toUpperCase() + selectedLabTest.status.slice(1)}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Requested Date</p>
+                  <p className="font-medium text-gray-800">
+                    {format(new Date(selectedLabTest.requestedDate), 'MMMM d, yyyy')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Scheduled Date</p>
+                  <p className="font-medium text-gray-800">
+                    {format(new Date(selectedLabTest.scheduledDate), 'MMMM d, yyyy')}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-lg font-semibold text-gray-800 mb-3">Description</h4>
+                <p className="text-gray-600">{selectedLabTest.description}</p>
+              </div>
+
+              {selectedLabTest.notes && (
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3">Notes</h4>
+                  <p className="text-gray-600">{selectedLabTest.notes}</p>
+                </div>
+              )}
+
+              {selectedLabTest.status === 'completed' && selectedLabTest.results && (
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3">Test Results</h4>
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <p className="text-gray-600">{selectedLabTest.results}</p>
+                    {selectedLabTest.reportFile && (
+                      <div className="mt-4">
+                        <a
+                          href={`http://localhost:3000/${selectedLabTest.reportFile}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--accent)] hover:text-opacity-80 transition-colors duration-200 flex items-center space-x-2"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            window.open(`http://localhost:3000/${selectedLabTest.reportFile}`, '_blank');
+                          }}
+                        >
+                          <FaFile className="w-4 h-4" />
+                          <span>View Report</span>
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedLabTest.status === 'in-progress' && showLabTestResultsForm && (
+                <div className="mt-6 space-y-4">
+                  <h4 className="text-lg font-semibold text-gray-800">Add Test Results</h4>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Results</label>
+                    <textarea
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200 h-32 resize-none"
+                      value={labTestResultsForm.results}
+                      onChange={(e) => setLabTestResultsForm(prev => ({ ...prev, results: e.target.value }))}
+                      placeholder="Enter test results"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Report File</label>
+                    <input
+                      type="file"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+                      onChange={(e) => setLabTestResultsForm(prev => ({ ...prev, reportFile: e.target.files[0] }))}
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                    />
+                  </div>
+              <div className="flex justify-end space-x-4">
+                <button
+                      onClick={() => {
+                        setShowLabTestResultsForm(false);
+                        setLabTestResultsForm({ results: '', reportFile: null });
+                      }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-all duration-200"
+                >
+                      Cancel
+                </button>
+                  <button
+                      onClick={() => handleUpdateLabTestResults(selectedLabTest._id)}
+                    className="px-4 py-2 text-sm font-medium text-white bg-[var(--accent)] rounded-lg hover:bg-opacity-90 transition-all duration-200"
+                    >
+                      Submit Results
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {selectedLabTest.status === 'in-progress' && !showLabTestResultsForm && (
+                <div className="mt-6">
+                  <button
+                    onClick={() => setShowLabTestResultsForm(true)}
+                    className="w-full px-4 py-2 text-sm font-medium text-white bg-[var(--accent)] rounded-lg hover:bg-opacity-90 transition-all duration-200"
+                  >
+                    Add Results
+                  </button>
+                </div>
+                )}
+              </div>
+            </div>
+        </div>
+      )}
+
+      {showLabTestResultsForm && (
+        <div className="mt-6 space-y-4">
+          <h4 className="text-lg font-semibold text-gray-800">Add Test Results</h4>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Results</label>
+            <textarea
+              className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200 h-32 resize-none"
+              value={labTestResultsForm.results}
+              onChange={(e) => setLabTestResultsForm(prev => ({ ...prev, results: e.target.value }))}
+              placeholder="Enter test results"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Report File</label>
+            <input
+              type="file"
+              className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all duration-200"
+              onChange={(e) => setLabTestResultsForm(prev => ({ ...prev, reportFile: e.target.files[0] }))}
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            />
+          </div>
+          <div className="flex justify-end space-x-4">
+            <button
+              onClick={() => {
+                setShowLabTestResultsForm(false);
+                setLabTestResultsForm({ results: '', reportFile: null });
+              }}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-all duration-200"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleUpdateLabTestResults(selectedLabTest._id)}
+              className="px-4 py-2 text-sm font-medium text-white bg-[var(--accent)] rounded-lg hover:bg-opacity-90 transition-all duration-200"
+            >
+              Submit Results
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -12,6 +12,9 @@ const dispatchRoutes = require('./routes/dispatch');
 const schedulesRouter = require('./routes/schedules');
 const prescriptionsRouter = require('./routes/prescriptions');
 const labTestRoutes = require('./routes/labTests');
+const reportsRoutes = require('./routes/reports');
+const mongoose = require('mongoose');
+const Appointment = require('./models/appointment');
 
 // Load env vars from the correct path
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -49,6 +52,95 @@ app.get('/api/schedules/test', (req, res) => {
   res.json({ message: 'Schedules route is working' });
 });
 
+// Diagnosis endpoint
+app.put('/api/appointments/:id/diagnosis', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { diagnosis } = req.body;
+
+    // Validate appointment ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid appointment ID format' });
+    }
+
+    // Find and update the appointment
+    const appointment = await Appointment.findById(id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    // Update the diagnosis
+    appointment.diagnosis = diagnosis;
+    await appointment.save();
+
+    // Return the updated appointment
+    const updatedAppointment = await Appointment.findById(id)
+      .populate('patient', 'name email phone')
+      .populate('doctor', 'name email department')
+      .populate('createdBy', 'name role');
+
+    res.json({
+      success: true,
+      message: 'Diagnosis updated successfully',
+      appointment: updatedAppointment
+    });
+  } catch (error) {
+    console.error('Error updating diagnosis:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update diagnosis',
+      error: error.message
+    });
+  }
+});
+
+// Appointment status update endpoint
+app.put('/api/appointments/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate appointment ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid appointment ID format' });
+    }
+
+    // Find and update the appointment
+    const appointment = await Appointment.findById(id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    // Validate status
+    if (!['scheduled', 'in-progress', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    // Update the status
+    appointment.status = status;
+    await appointment.save();
+
+    // Return the updated appointment
+    const updatedAppointment = await Appointment.findById(id)
+      .populate('patient', 'name email phone')
+      .populate('doctor', 'name email department')
+      .populate('createdBy', 'name role');
+
+    res.json({
+      success: true,
+      message: 'Appointment status updated successfully',
+      appointment: updatedAppointment
+    });
+  } catch (error) {
+    console.error('Error updating appointment status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update appointment status',
+      error: error.message
+    });
+  }
+});
+
 // API Routes
 app.use('/api/users', userRoutes);
 app.use('/api/staff', staffRoutes);
@@ -58,6 +150,7 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/dispatch', dispatchRoutes);
 app.use('/api/prescriptions', prescriptionsRouter);
+app.use('/api/reports', reportsRoutes);
 
 // Lab Test Routes with error handling
 app.use('/api/lab-tests', (req, res, next) => {

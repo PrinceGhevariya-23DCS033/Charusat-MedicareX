@@ -50,6 +50,14 @@ const userSchema = new mongoose.Schema({
   address: String,
   bloodGroup: String,
   medicalHistory: String,
+  isCharusatStudent: {
+    type: Boolean,
+    default: false
+  },
+  studentId: String,
+  studentBranch: String,
+  studentInstitute: String,
+  studentBatch: String,
   // Counselor specific fields
   designation: String,
   expertise: String,

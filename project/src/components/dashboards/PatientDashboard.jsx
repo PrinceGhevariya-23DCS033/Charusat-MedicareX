@@ -3,27 +3,27 @@ import axios from 'axios';
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import {
-    FaBook,
-    FaCalendar,
-    FaCalendarAlt,
-    FaCalendarCheck,
-    FaCalendarPlus,
-    FaCheckCircle,
-    FaClock,
-    FaComments,
-    FaCreditCard,
-    FaExclamationCircle,
-    FaFileInvoiceDollar,
-    FaFileMedical,
-    FaFlask,
-    FaNotesMedical,
-    FaPrescription,
-    FaPrint,
-    FaRegClock,
-    FaSearch,
-    FaTimes,
-    FaTimesCircle,
-    FaUserMd
+  FaBook,
+  FaCalendar,
+  FaCalendarAlt,
+  FaCalendarCheck,
+  FaCalendarPlus,
+  FaCheckCircle,
+  FaClock,
+  FaComments,
+  FaCreditCard,
+  FaExclamationCircle,
+  FaFileInvoiceDollar,
+  FaFileMedical,
+  FaFlask,
+  FaNotesMedical,
+  FaPrescription,
+  FaPrint,
+  FaRegClock,
+  FaSearch,
+  FaTimes,
+  FaTimesCircle,
+  FaUserMd
 } from 'react-icons/fa';
 import PatientPrescriptions from '../prescriptions/PatientPrescriptions';
 import PrescriptionView from '../prescriptions/PrescriptionView';
@@ -64,6 +64,8 @@ function PatientDashboard() {
   const [selectedLabTest, setSelectedLabTest] = useState(null);
   const [showLabTestModal, setShowLabTestModal] = useState(false);
   const [labTestFilter, setLabTestFilter] = useState('all'); // all, pending, completed
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
   // Get user token from localStorage
   const token = localStorage.getItem('token');
@@ -268,111 +270,253 @@ function PatientDashboard() {
     fetchLabTests();
   }, [token, userId]);
 
-  const handleDoctorSelect = (doctorId) => {
-    console.log('Selected doctor ID:', doctorId); // Debug log
+  const handleDoctorSelect = async (doctorId) => {
+    console.log('Selected doctor ID:', doctorId);
     const doctor = doctors.find(d => d._id === doctorId);
-    console.log('Found doctor:', doctor); // Debug log
+    console.log('Found doctor:', doctor);
     setSelectedDoctor(doctor);
     setNewAppointment(prev => ({ ...prev, doctorId }));
+    setAvailableSlots([]);
+  };
+
+  const handleDateSelect = async (date) => {
+    setNewAppointment(prev => ({ ...prev, date }));
+    if (!newAppointment.doctorId) {
+      setError('Please select a doctor first');
+      return;
+    }
+
+    setLoadingSlots(true);
+    try {
+      const response = await axios.get(
+        `http://localhost:3000/api/appointments/available-slots/${newAppointment.doctorId}/${date}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (response.data.error) {
+        throw new Error(response.data.error);
+      }
+
+      setAvailableSlots(response.data.availableSlots);
+      setError('');
+    } catch (error) {
+      setError(error.response?.data?.error || error.message || 'Error fetching available slots');
+      setAvailableSlots([]);
+    } finally {
+      setLoadingSlots(false);
+    }
   };
 
   const handleBookAppointment = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
     setSuccess('');
 
+    // Validate token
+    if (!token) {
+      setError('Please log in to book an appointment');
+      return;
+    }
+
     try {
-      const selectedDoctor = doctors.find(d => d._id === newAppointment.doctorId);
-      if (!selectedDoctor) {
-        throw new Error('Doctor not found');
+      // Validate token expiration
+      const tokenPayload = JSON.parse(atob(token.split('.')[1]));
+      const tokenExpiration = tokenPayload.exp * 1000; // Convert to milliseconds
+      
+      if (Date.now() >= tokenExpiration) {
+        setError('Your session has expired. Please log in again.');
+        return;
       }
 
-      const appointmentData = {
-        patientId: userId,
-        doctorId: newAppointment.doctorId,
-        date: newAppointment.date,
-        time: newAppointment.time,
-        type: newAppointment.type,
-        department: selectedDoctor.department,
-        symptoms: newAppointment.symptoms
-      };
+      // Validate required fields
+      if (!newAppointment.doctorId || !newAppointment.date || !newAppointment.time) {
+        setError('Please fill in all required fields');
+        return;
+      }
 
-      const response = await axios.post('http://localhost:3000/api/appointments', appointmentData, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      // Check if the selected slot is still available
+      const selectedSlot = availableSlots.find(slot => slot.time === newAppointment.time);
+      if (!selectedSlot || !selectedSlot.isAvailable) {
+        setError('The selected time slot is no longer available. Please select another time.');
+        return;
+      }
 
-      // Add the new appointment to the list
-      setAppointments(prevAppointments => {
-        const updatedAppointments = [...prevAppointments, response.data];
-        return updatedAppointments.sort((a, b) => {
-          const dateA = new Date(a.date);
-          const dateB = new Date(b.date);
-          if (dateA.getTime() === dateB.getTime()) {
-            return a.time.localeCompare(b.time);
+      try {
+        // Check for existing appointments at the same time
+        const existingAppointment = appointments.find(
+          app => app.date === newAppointment.date && 
+          app.time === newAppointment.time &&
+          app.status !== 'cancelled'
+        );
+
+        if (existingAppointment) {
+          setError('You already have an appointment scheduled for this time');
+          return;
+        }
+
+        // Get the selected doctor's details
+        const doctor = doctors.find(d => d._id === newAppointment.doctorId);
+        if (!doctor) {
+          setError('Selected doctor not found');
+          return;
+        }
+
+        // Format the appointment data
+        const appointmentData = {
+          doctorId: newAppointment.doctorId,
+          patientId: userId,
+          date: newAppointment.date,
+          time: newAppointment.time,
+          type: newAppointment.type || 'consultation',
+          symptoms: newAppointment.symptoms || '',
+          status: 'scheduled',
+          department: doctor.department || 'General',
+          doctorName: `${doctor.firstName} ${doctor.lastName}`
+        };
+
+        console.log('Sending appointment data:', appointmentData);
+
+        // Create the appointment
+        const response = await axios.post(
+          'http://localhost:3000/api/appointments',
+          appointmentData,
+          { 
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            } 
           }
-          return dateA - dateB;
-        });
-      });
+        );
 
-      setSuccess('Appointment booked successfully');
-      setNewAppointment({
-        doctorId: '',
-        date: '',
-        time: '',
-        type: 'consultation',
-        symptoms: ''
-      });
+        if (response.data.error) {
+          throw new Error(response.data.error);
+        }
+
+        // Update the appointments list
+        setAppointments(prev => [...prev, response.data]);
+        setSuccess('Appointment booked successfully!');
+        // Reset the form
+        setNewAppointment({
+          doctorId: '',
+          date: '',
+          time: '',
+          type: 'consultation',
+          symptoms: ''
+        });
+        setAvailableSlots([]);
+      } catch (error) {
+        console.error('Appointment creation error:', error.response?.data || error);
+        if (error.response?.status === 401) {
+          setError('Your session has expired. Please log in again.');
+        } else if (error.response?.data?.error) {
+          setError(error.response.data.error);
+        } else {
+          setError(error.message || 'Error booking appointment');
+        }
+      }
     } catch (error) {
-      setError(error.response?.data?.error || 'Error booking appointment');
-    } finally {
-      setLoading(false);
+      console.error('Token validation error:', error);
+      setError('Error validating session. Please try again.');
     }
   };
 
   const handleCancelAppointment = async (appointmentId) => {
     try {
-      await axios.patch(
-        `http://localhost:3000/api/appointments/${appointmentId}/status`,
-        { status: 'cancelled' },
+      // Check if appointment is already completed
+      const appointment = appointments.find(apt => apt._id === appointmentId);
+      if (appointment.status === 'completed') {
+        throw new Error('Cannot cancel a completed appointment');
+      }
+
+      const response = await axios.patch(
+        `http://localhost:3000/api/appointments/${appointmentId}/cancel`,
+        {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      if (response.data.error) {
+        throw new Error(response.data.error);
+      }
 
       setAppointments(appointments.map(apt => 
         apt._id === appointmentId ? { ...apt, status: 'cancelled' } : apt
       ));
       setSuccess('Appointment cancelled successfully');
     } catch (error) {
-      setError('Error cancelling appointment');
+      setError(error.response?.data?.error || error.message || 'Error cancelling appointment');
     }
   };
 
   const handleRescheduleAppointment = async (appointmentId) => {
     try {
+      // Check if appointment is already completed
+      const appointment = appointments.find(apt => apt._id === appointmentId);
+      if (appointment.status === 'completed') {
+        throw new Error('Cannot reschedule a completed appointment');
+      }
+
       if (!reschedulingDetails.date || !reschedulingDetails.time) {
         setError('Please select both date and time for rescheduling');
         return;
       }
 
-      await axios.patch(
-        `http://localhost:3000/api/appointments/${appointmentId}`,
+      // Validate new date is not in the past
+      const newDate = new Date(reschedulingDetails.date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (newDate < today) {
+        setError('New appointment date cannot be in the past');
+        return;
+      }
+
+      // Check doctor's availability for the new date and time
+      const availabilityResponse = await axios.get(
+        `http://localhost:3000/api/appointments/available-slots/${appointment.doctor._id}/${reschedulingDetails.date}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const availableSlots = availabilityResponse.data.availableSlots;
+      const isSlotAvailable = availableSlots.some(slot => slot.time === reschedulingDetails.time && slot.isAvailable);
+
+      if (!isSlotAvailable) {
+        throw new Error('This time slot is not available. Please select a different time.');
+      }
+
+      const response = await axios.patch(
+        `http://localhost:3000/api/appointments/${appointmentId}/reschedule`,
         { 
           date: reschedulingDetails.date, 
           time: reschedulingDetails.time 
         },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          } 
+        }
       );
 
+      if (response.data.error) {
+        throw new Error(response.data.error);
+      }
+
+      // Update local state with the new appointment details
       setAppointments(appointments.map(apt => 
         apt._id === appointmentId 
-          ? { ...apt, date: reschedulingDetails.date, time: reschedulingDetails.time } 
+          ? { 
+              ...apt, 
+              date: reschedulingDetails.date, 
+              time: reschedulingDetails.time,
+              status: 'scheduled'
+            } 
           : apt
       ));
+
       setSuccess('Appointment rescheduled successfully');
       setReschedulingAppointment(null);
       setReschedulingDetails({ date: '', time: '' });
     } catch (error) {
-      setError('Error rescheduling appointment');
+      setError(error.response?.data?.error || error.message || 'Error rescheduling appointment');
     }
   };
 
@@ -659,6 +803,170 @@ function PatientDashboard() {
     setTimeout(() => printWindow.print(), 500);
   };
 
+  const handlePrintRecord = (record) => {
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Medical Record - ${record.title}</title>
+          <style>
+            @media print {
+              body {
+                font-family: 'Arial', sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: white;
+              }
+              .print-container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: none;
+              }
+              .header {
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 2px solid #eee;
+              }
+              .header h1 {
+                color: #2c3e50;
+                margin: 0;
+                font-size: 24px;
+              }
+              .record-date {
+                color: #7f8c8d;
+                font-size: 14px;
+                margin-top: 5px;
+              }
+              .section {
+                margin-bottom: 30px;
+              }
+              .section-title {
+                color: #2c3e50;
+                font-size: 18px;
+                margin-bottom: 15px;
+                padding-bottom: 5px;
+                border-bottom: 1px solid #eee;
+              }
+              .info-grid {
+                display: grid;
+                grid-template-columns: 150px 1fr;
+                gap: 10px;
+                margin-bottom: 10px;
+              }
+              .info-label {
+                color: #7f8c8d;
+                font-weight: 500;
+              }
+              .info-value {
+                color: #2c3e50;
+              }
+              .status-badge {
+                display: inline-block;
+                padding: 5px 10px;
+                border-radius: 15px;
+                font-size: 12px;
+                font-weight: 500;
+              }
+              .status-completed {
+                background: #e8f5e9;
+                color: #2e7d32;
+              }
+              .status-in-progress {
+                background: #fff3e0;
+                color: #ef6c00;
+              }
+              .status-cancelled {
+                background: #ffebee;
+                color: #c62828;
+              }
+              .no-print {
+                display: none;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="print-container">
+            <div class="header">
+              <h1>Medical Record</h1>
+              <div class="record-date">
+                ${new Date(record.date).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">Record Information</div>
+              <div class="info-grid">
+                <div class="info-label">Type</div>
+                <div class="info-value capitalize">${record.type}</div>
+                <div class="info-label">Title</div>
+                <div class="info-value">${record.title}</div>
+                <div class="info-label">Status</div>
+                <div class="info-value">
+                  <span class="status-badge status-${record.status.toLowerCase()}">
+                    ${record.status.charAt(0).toUpperCase() + record.status.slice(1)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">Details</div>
+              <p class="info-value">${record.description}</p>
+            </div>
+
+            ${record.type === 'appointment' ? `
+              <div class="section">
+                <div class="section-title">Appointment Details</div>
+                <div class="info-grid">
+                  <div class="info-label">Doctor</div>
+                  <div class="info-value">${record.doctor?.name || 'Not specified'}</div>
+                  <div class="info-label">Department</div>
+                  <div class="info-value">${record.department || 'Not specified'}</div>
+                  <div class="info-label">Type</div>
+                  <div class="info-value capitalize">${record.type}</div>
+                  ${record.symptoms ? `
+                    <div class="info-label">Symptoms</div>
+                    <div class="info-value">${record.symptoms}</div>
+                  ` : ''}
+                </div>
+              </div>
+            ` : ''}
+
+            ${record.notes ? `
+              <div class="section">
+                <div class="section-title">Notes</div>
+                <p class="info-value">${record.notes}</p>
+              </div>
+            ` : ''}
+
+            ${record.results ? `
+              <div class="section">
+                <div class="section-title">Results</div>
+                <p class="info-value">${record.results}</p>
+              </div>
+            ` : ''}
+
+            <div class="section no-print">
+              <button onclick="window.print()" class="print-button">Print Record</button>
+            </div>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 500);
+  };
+
   const filteredRecords = medicalRecords.filter(record => {
     const matchesFilter = recordFilter === 'all' || record.type === recordFilter;
     const matchesSearch = record.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -680,8 +988,8 @@ function PatientDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#4DC6B6]/10 to-[#4DC6B6]/5 p-6 space-y-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-[#4DC6B6]/10 to-[#4DC6B6]/5 p-8 space-y-8">
+      <div className="max-w-7xl mx-auto space-y-8">
         <h2 className="text-3xl font-bold text-gray-800 mb-8">Patient Dashboard</h2>
       
       <Tab.Group>
@@ -836,7 +1144,7 @@ function PatientDashboard() {
                       type="date" 
                         className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#4DC6B6] focus:border-transparent transition-all duration-200"
                       value={newAppointment.date}
-                      onChange={(e) => setNewAppointment({ ...newAppointment, date: e.target.value })}
+                      onChange={(e) => handleDateSelect(e.target.value)}
                       min={new Date().toISOString().split('T')[0]}
                       required
                     />
@@ -846,19 +1154,34 @@ function PatientDashboard() {
                         <FaClock className="text-[#4DC6B6]" />
                       <span>Time</span>
                     </label>
-                    <select 
+                    {loadingSlots ? (
+                      <div className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50">
+                        <span className="text-gray-500">Loading available slots...</span>
+                      </div>
+                    ) : availableSlots.length === 0 ? (
+                      <div className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50">
+                        <span className="text-gray-500">Select a date to see available slots</span>
+                      </div>
+                    ) : (
+                      <select 
                         className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#4DC6B6] focus:border-transparent transition-all duration-200"
-                      value={newAppointment.time}
-                      onChange={(e) => setNewAppointment({ ...newAppointment, time: e.target.value })}
-                      required
-                    >
-                      <option value="">Select time</option>
-                      {Array.from({ length: 17 }, (_, i) => i + 9).map(hour => (
-                        <option key={hour} value={`${hour.toString().padStart(2, '0')}:00`}>
-                          {hour.toString().padStart(2, '0')}:00
-                        </option>
-                      ))}
-                    </select>
+                        value={newAppointment.time}
+                        onChange={(e) => setNewAppointment({ ...newAppointment, time: e.target.value })}
+                        required
+                      >
+                        <option value="">Select time</option>
+                        {availableSlots.map(slot => (
+                          <option 
+                            key={slot.time} 
+                            value={slot.time}
+                            disabled={!slot.isAvailable}
+                            className={!slot.isAvailable ? 'text-gray-400' : ''}
+                          >
+                            {slot.time} {!slot.isAvailable && `(${slot.reason})`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                   <div>
                     <label className="flex items-center gap-2 text-gray-700 mb-2">
@@ -941,7 +1264,7 @@ function PatientDashboard() {
                               </div>
                           </div>
                           <div className="flex gap-2">
-                            {apt.status === 'scheduled' && (
+                            {apt.status !== 'cancelled' && apt.status !== 'completed' && (
                               <>
                                 <button 
                                   onClick={() => handleCancelAppointment(apt._id)}
@@ -951,8 +1274,11 @@ function PatientDashboard() {
                                 </button>
                                 <button 
                                   onClick={() => {
-                                      setReschedulingAppointment(apt);
-                                    setReschedulingDetails({ date: '', time: '' });
+                                    startRescheduling(apt);
+                                    setReschedulingDetails({ 
+                                      date: new Date(apt.date).toISOString().split('T')[0], 
+                                      time: apt.time 
+                                    });
                                   }}
                                     className="p-2 text-[#4DC6B6] hover:text-[#4DC6B6]/80 hover:bg-[#4DC6B6]/5 rounded-lg transition-colors duration-200"
                                 >
@@ -1056,12 +1382,12 @@ function PatientDashboard() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setSelectedRecord(record);
-                          setShowRecordModal(true);
+                          handlePrintRecord(record);
                         }}
-                          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                          className="px-4 py-2 bg-[#4DC6B6] text-white rounded-lg hover:bg-[#4DC6B6]/90 transition-colors duration-200 flex items-center gap-2"
                       >
-                          View Details →
+                          <FaPrint />
+                          Print Record
                       </button>
                     </div>
                   </div>
@@ -1705,6 +2031,10 @@ function PatientDashboard() {
         </Tab.Panels>
       </Tab.Group>
 
+      {/* Add spacing after the panels */}
+      <div className="h-8"></div>
+      </div>
+
       {/* Payment Modal */}
       {showPaymentModal && selectedBill && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -1795,7 +2125,53 @@ function PatientDashboard() {
           </div>
         </div>
       )}
-      </div>
+
+      {/* Rescheduling Modal */}
+      {reschedulingAppointment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">Reschedule Appointment</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={reschedulingDetails.date}
+                  onChange={(e) => setReschedulingDetails(prev => ({ ...prev, date: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4DC6B6] focus:border-transparent"
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Time</label>
+                <input
+                  type="time"
+                  value={reschedulingDetails.time}
+                  onChange={(e) => setReschedulingDetails(prev => ({ ...prev, time: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4DC6B6] focus:border-transparent"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-4 mt-6">
+              <button
+                onClick={() => {
+                  setReschedulingAppointment(null);
+                  setReschedulingDetails({ date: '', time: '' });
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleRescheduleAppointment(reschedulingAppointment._id)}
+                className="px-4 py-2 bg-[#4DC6B6] text-white rounded-lg hover:bg-[#4DC6B6]/90"
+              >
+                Reschedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -324,4 +324,41 @@ router.get('/stats', auth, async (req, res) => {
   }
 });
 
+// Get billing analytics
+router.get('/analytics', auth, async (req, res) => {
+  try {
+    // Get the last 30 days of billing data
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const billingData = await Billing.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          amount: { $sum: "$amount" }
+        }
+      },
+      {
+        $sort: { _id: 1 }
+      }
+    ]);
+
+    // Format data for frontend
+    const formattedData = billingData.map(item => ({
+      date: item._id,
+      amount: item.amount
+    }));
+
+    res.json(formattedData);
+  } catch (error) {
+    console.error('Error fetching billing analytics:', error);
+    res.status(500).json({ error: 'Error fetching billing analytics' });
+  }
+});
+
 module.exports = router; 

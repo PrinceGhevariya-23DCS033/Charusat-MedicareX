@@ -26,8 +26,13 @@ const appointmentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['scheduled', 'in-progress', 'completed', 'cancelled'],
-    default: 'scheduled'
+    enum: ['pending', 'approved', 'rejected', 'scheduled', 'in-progress', 'completed', 'cancelled'],
+    default: 'pending'
+  },
+  counselorApproval: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
   },
   department: {
     type: String,
@@ -49,6 +54,10 @@ const appointmentSchema = new mongoose.Schema({
   },
   prescription: {
     type: String
+  },
+  bill: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true
@@ -60,4 +69,5 @@ appointmentSchema.pre('save', function(next) {
   next();
 });
 
-module.exports = mongoose.model('Appointment', appointmentSchema); 
+// Check if the model already exists before creating it
+module.exports = mongoose.models.Appointment || mongoose.model('Appointment', appointmentSchema); 
